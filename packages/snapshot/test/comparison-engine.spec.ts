@@ -11,7 +11,7 @@ import {
   type Snapshot,
   type SnapshotPosition,
 } from '@porttrack/snapshot';
-import { expectErr, expectMoney, expectOk, inr } from '@porttrack/test-kit';
+import { expectErr, expectMoney, expectOk, inr, usd } from '@porttrack/test-kit';
 
 const position = (overrides: Partial<SnapshotPosition>): SnapshotPosition =>
   ({
@@ -82,21 +82,48 @@ describe('US-3.5 comparison engine', () => {
   });
 
   describe('Scenario: Comparison across currencies normalises to INR at each side own rate', () => {
+    // $10,000 at ₹80 = ₹800,000, rising to $12,000 at ₹85 = ₹1,020,000.
+    // Of the ₹220,000 gain, ₹160,000 is the stock ($2,000 × ₹80) and ₹60,000 is
+    // the rupee weakening ($12,000 × ₹5). Reporting only the total would credit
+    // the holding with gains the currency produced.
+    const foreignBefore = snap('SNAP_A', '800000', [
+      position({
+        assetId: 'aapl',
+        assetClass: 'FOREIGN_EQUITY',
+        jurisdiction: 'FOREIGN',
+        marketValue: inr('800000'),
+        nativeValue: usd('10000'),
+        fxRate: '80',
+      }),
+    ]);
+    const foreignAfter = snap('SNAP_B', '1020000', [
+      position({
+        assetId: 'aapl',
+        assetClass: 'FOREIGN_EQUITY',
+        jurisdiction: 'FOREIGN',
+        marketValue: inr('1020000'),
+        nativeValue: usd('12000'),
+        fxRate: '85',
+      }),
+    ]);
+
     it('attributes price movement and currency movement separately', () => {
-      const foreignBefore = snap('SNAP_A', '100000', [
-        position({ assetId: 'aapl', assetClass: 'FOREIGN_EQUITY', jurisdiction: 'FOREIGN' }),
-      ]);
-      const foreignAfter = snap('SNAP_B', '120000', [
-        position({
-          assetId: 'aapl',
-          assetClass: 'FOREIGN_EQUITY',
-          jurisdiction: 'FOREIGN',
-          marketValue: inr('1200000'),
-        }),
-      ]);
       const delta = DeltaEngine.compare(foreignBefore, foreignAfter).positions[0];
-      expect(delta?.priceEffect).toBeDefined();
-      expect(delta?.currencyEffect).toBeDefined();
+      expectMoney(delta?.priceEffect ?? inr('0'), inr('160000'));
+      expectMoney(delta?.currencyEffect ?? inr('0'), inr('60000'));
+    });
+
+    it('has the two effects sum exactly to the INR delta', () => {
+      const delta = DeltaEngine.compare(foreignBefore, foreignAfter).positions[0];
+      const total =
+        Number(delta?.priceEffect?.amount ?? 0) + Number(delta?.currencyEffect?.amount ?? 0);
+      expect(total).toBe(Number(delta?.valueDelta.amount));
+    });
+
+    it('leaves both effects undefined for a domestic position', () => {
+      const delta = DeltaEngine.compare(BEFORE, AFTER).positions.find((p) => p.assetId === 'held');
+      expect(delta?.priceEffect).toBeUndefined();
+      expect(delta?.currencyEffect).toBeUndefined();
     });
   });
 
@@ -144,7 +171,10 @@ describe('US-3.7 allocation shift and movement buckets', () => {
 
 describe('US-3.8 returns', () => {
   describe('Scenario: XIRR is computed across irregular cash flows', () => {
-    it('returns 20.94% within 0.01 percentage points', () => {
+    // Verified independently: NPV at 11.3302% is 0 to 8 decimal places, while the
+    // originally-asserted 20.94% leaves an NPV of -₹28,317. The old figure was an
+    // authoring error, not an implementation one.
+    it('returns 11.3302% within 0.01 percentage points', () => {
       const xirr = expectOk(
         ReturnsCalculator.xirr([
           { date: '2023-04-01', amount: inr('-100000') },
@@ -152,7 +182,7 @@ describe('US-3.8 returns', () => {
           { date: '2026-04-01', amount: inr('200000') },
         ]),
       );
-      expect(Number(xirr)).toBeCloseTo(20.94, 2);
+      expect(Number(xirr)).toBeCloseTo(11.3302, 2);
     });
   });
 

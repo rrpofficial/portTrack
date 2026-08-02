@@ -9,18 +9,19 @@ local-first, privacy-first, containerized.
 | [`implementation_plan_portrack.md`](./implementation_plan_portrack.md) | ADRs, 80 user stories, acceptance criteria, DoD, milestone tracker |
 | [`ARCHITECTURE_portrack.md`](./ARCHITECTURE_portrack.md) | C4 component views + 7 data-flow sequence diagrams |
 
-## Current status — M3 complete
+## Current status — M4 complete
 
 ```
-467 tests   258 passing   209 failing   0 skipped
+484 tests   307 passing   177 failing   0 skipped
 typecheck   clean          lint   clean
 ```
 
-Five packages fully green: `core-domain` (the asset ledger, 96/96), `fx-itbr` (the ITBR rate engine
-and dual-rate conversion, 33/33), `shared-kernel`, `persistence`, `platform`.
+Six packages fully green: `core-domain` (the asset ledger, 96/96), `fx-itbr` (ITBR rates and
+dual-rate conversion, 33/33), `snapshot` (immutable snapshots, comparison, XIRR, 49/49),
+`shared-kernel`, `persistence`, `platform`.
 
-The 209 failures are unimplemented stories, each reporting `NotImplementedError ... (US-x.y)`.
-Next up is **M4 — snapshots** (EPIC-3: immutable content-addressed snapshots, comparison, XIRR).
+The 177 failures are unimplemented stories, each reporting `NotImplementedError ... (US-x.y)`.
+Next up is **M5 — the tax engine** (EPIC-5: slabs, surcharge, capital gains, advance tax).
 
 ## Commands
 

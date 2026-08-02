@@ -13,6 +13,7 @@
     "@porttrack/shared-kernel": "workspace:*"
   },
   "devDependencies": {
+    "@porttrack/fx-itbr": "workspace:*",
     "@porttrack/test-kit": "workspace:*"
   }
 }

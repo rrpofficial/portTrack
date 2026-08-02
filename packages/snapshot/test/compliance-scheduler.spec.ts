@@ -8,11 +8,16 @@ import { describe, it, expect } from 'vitest';
 import { CompliancePolicy, ContentHasher, SnapshotFactory, type Snapshot } from '@porttrack/snapshot';
 import { expectErr, expectOk, inr } from '@porttrack/test-kit';
 
-const aSnapshot = (overrides: Partial<Snapshot> = {}): Snapshot =>
-  ({
+/**
+ * Builds a genuine snapshot: deeply frozen, with its real content hash. A literal
+ * placeholder hash would make the hash and verify assertions unsatisfiable, and an
+ * unfrozen object would make the immutability assertion vacuous.
+ */
+const aSnapshot = (overrides: Partial<Snapshot> = {}): Snapshot => {
+  const draft = {
     snapshotId: 'DOM_31MAR2026',
-    kind: 'DOMESTIC_COMPLIANCE',
-    scope: 'DOMESTIC',
+    kind: 'DOMESTIC_COMPLIANCE' as const,
+    scope: 'DOMESTIC' as const,
     asOf: '2026-03-31T23:59:59.999+05:30',
     positions: [],
     totals: {
@@ -21,11 +26,18 @@ const aSnapshot = (overrides: Partial<Snapshot> = {}): Snapshot =>
       liabilities: inr('8000000'),
       byAssetClass: {},
     },
-    contentHash: 'sha256:placeholder',
     createdAt: '2026-04-01T00:05:00+05:30',
-    frozen: true,
-    ...overrides,
-  });
+    frozen: true as const,
+  };
+  const withHash = { ...draft, contentHash: ContentHasher.hash(draft), ...overrides };
+  return deepFreeze(withHash);
+};
+
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  for (const entry of Object.values(value as Record<string, unknown>)) deepFreeze(entry);
+  return Object.freeze(value);
+}
 
 describe('US-3.2 / US-3.3 compliance snapshot scheduler', () => {
   describe('Scenario: Dual compliance snapshot generation (PRD FR-3 AC)', () => {

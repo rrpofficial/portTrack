@@ -211,6 +211,9 @@ importers:
         specifier: workspace:*
         version: link:../shared-kernel
     devDependencies:
+      '@porttrack/fx-itbr':
+        specifier: workspace:*
+        version: link:../fx-itbr
       '@porttrack/test-kit':
         specifier: workspace:*
         version: link:../../tests/test-kit

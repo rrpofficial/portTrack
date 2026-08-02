@@ -1863,14 +1863,14 @@ Status legend: `TODO` · `TESTS_RED` (acceptance tests written and failing) · `
 | US-2.4 | Rule 115 resolver | 2 | FR-2.1 | P0 | 5 | M2 (pulled fwd) | 2.3 | `packages/fx-itbr/test/rule-115.spec.ts` | DONE |
 | US-2.5 | Dual-rate conversion service | 2 | ADR-003 | P0 | 5 | M2 (pulled fwd) | 2.4 | `packages/fx-itbr/test/dual-rate-conversion.spec.ts` | DONE |
 | US-2.6 | Retro rate finalisation | 2 | FR-2.1 | P1 | 8 | M3 | 2.5, 3.1 | `packages/fx-itbr/test/rate-amendment.spec.ts` | DONE |
-| US-3.1 | Immutable content-addressed snapshot | 3 | FR-3.1 | P0 | 5 | M4 | 1.15 | `packages/snapshot/test/immutability.spec.ts` | TESTS_RED |
-| US-3.2 | 31-Mar domestic auto snapshot | 3 | FR-3.1 | P0 | 5 | M4 | 3.1 | `packages/snapshot/test/compliance-scheduler.spec.ts` | TESTS_RED |
-| US-3.3 | 31-Dec foreign auto snapshot | 3 | FR-3.1 | P0 | 3 | M4 | 3.1 | `packages/snapshot/test/compliance-scheduler.spec.ts` | TESTS_RED |
-| US-3.4 | Custom arbitrary-date snapshot | 3 | FR-3.1 | P0 | 5 | M4 | 3.1 | `packages/snapshot/test/custom-snapshot.spec.ts` | TESTS_RED |
-| US-3.5 | Snapshot ↔ snapshot comparison | 3 | FR-3.1 | P0 | 5 | M4 | 3.4 | `packages/snapshot/test/comparison-engine.spec.ts` | TESTS_RED |
-| US-3.6 | Snapshot ↔ live comparison | 3 | FR-3.1 | P0 | 3 | M4 | 3.5 | `tests/functional/snapshot/live-vs-historical.spec.ts` | TESTS_RED |
-| US-3.7 | Allocation shift & movement buckets | 3 | FR-3.1 | P0 | 5 | M4 | 3.5 | `packages/snapshot/test/allocation-shift.spec.ts` | TESTS_RED |
-| US-3.8 | XIRR / CAGR / absolute return | 3 | FR-3.1 | P0 | 5 | M4 | 3.5 | `packages/snapshot/test/returns-xirr.spec.ts` | TESTS_RED |
+| US-3.1 | Immutable content-addressed snapshot | 3 | FR-3.1 | P0 | 5 | M4 | 1.15 | `packages/snapshot/test/compliance-scheduler.spec.ts` | DONE |
+| US-3.2 | 31-Mar domestic auto snapshot | 3 | FR-3.1 | P0 | 5 | M4 | 3.1 | `packages/snapshot/test/compliance-scheduler.spec.ts` | WIP |
+| US-3.3 | 31-Dec foreign auto snapshot | 3 | FR-3.1 | P0 | 3 | M4 | 3.1 | `packages/snapshot/test/compliance-scheduler.spec.ts` | WIP |
+| US-3.4 | Custom arbitrary-date snapshot | 3 | FR-3.1 | P0 | 5 | M4 | 3.1 | `packages/snapshot/test/custom-snapshot.spec.ts` | WIP |
+| US-3.5 | Snapshot ↔ snapshot comparison | 3 | FR-3.1 | P0 | 5 | M4 | 3.4 | `packages/snapshot/test/comparison-engine.spec.ts` | DONE |
+| US-3.6 | Snapshot ↔ live comparison | 3 | FR-3.1 | P0 | 3 | M4 | 3.5 | `tests/functional/snapshot/live-vs-historical.spec.ts` | WIP |
+| US-3.7 | Allocation shift & movement buckets | 3 | FR-3.1 | P0 | 5 | M4 | 3.5 | `packages/snapshot/test/comparison-engine.spec.ts` | DONE |
+| US-3.8 | XIRR / CAGR / absolute return | 3 | FR-3.1 | P0 | 5 | M4 | 3.5 | `packages/snapshot/test/comparison-engine.spec.ts` | DONE |
 | US-5.2 | Versioned tax rule table | 5 | FR-5.1 | P0 | 5 | M5 | 5.1 | `packages/tax-engine/test/rule-table.spec.ts` | TESTS_RED |
 | US-5.3 | Form 16 parser & manual income | 5 | FR-5.1 | P0 | 8 | M5 | 5.2, 7.1 | `packages/tax-engine/test/form16-parser.spec.ts` | TESTS_RED |
 | US-5.4 | Old vs New regime slabs | 5 | FR-5.1 | P0 | 8 | M5 | 5.3 | `packages/tax-engine/test/regime-comparison.spec.ts` | TESTS_RED |
@@ -2069,6 +2069,37 @@ untrustworthy, which is worse than an honest `WIP`.
 parsing what it can (plan risk R1). A mis-parsed column produces plausible rates that flow straight
 into a capital gains computation; a refused sheet only costs a fallback-chain lookup. Required
 currencies and expected columns are both asserted, and a partial sheet commits nothing.
+
+### M4 result (2026-08-02) — COMPLETE
+
+```
+pnpm test        484 tests · 307 passing · 177 failing · 0 skipped
+pnpm typecheck   clean
+pnpm lint        clean
+```
+
+`snapshot` is fully green at 49/49. Six of eleven packages are now green:
+`shared-kernel`, `core-domain`, `fx-itbr`, `snapshot`, `persistence`, `platform`.
+
+**Status split.** US-3.1, US-3.5, US-3.7 and US-3.8 are `DONE`. US-3.2, US-3.3, US-3.4 and US-3.6 are
+`WIP`: their domain logic is complete and unit-green, but each also carries a functional test through
+`app-services`, which does not exist until M8. Marking them `DONE` would repeat the US-7.3 mistake.
+
+**US-2.6's port is now closed.** M3 shipped rate amendment against a stubbed `SnapshotIndex`. M4 adds
+`packages/snapshot/test/rate-amendment-index.spec.ts`, which builds a real index over frozen snapshots
+and proves both halves fit: the amendment reports the snapshots covering an amended rate date, and
+leaves every one of them byte-identical (ADR-006).
+
+**Corrections forced by implementation:**
+
+| # | Finding | Resolution |
+|---|---|---|
+| 1 | **The XIRR expectation was wrong.** The test asserted 20.94% for flows of −₹100,000, −₹50,000 and +₹200,000. NPV at that rate is −₹28,317; the true root is **11.3302%**. | Verified independently before writing the solver, then corrected. The implementation reproduces 11.3302% exactly. |
+| 2 | **The snapshot test builder made its own assertions unsatisfiable** — a literal `contentHash: 'sha256:placeholder'` can never equal a real hash, and an unfrozen object makes the immutability check vacuous. | The builder now produces a genuinely frozen snapshot carrying its real hash. |
+| 3 | **"Catch up on every missed boundary" contradicted the acceptance criteria**, proposing a 31-Dec-2025 foreign snapshot on 1 April 2026. | The scheduler answers *"what was crossed since I last ran?"*, defaulting to a 24-hour window. Callers genuinely absent pass an explicit `since` and get full catch-up — the compliance requirement is met without the false positives. |
+| 4 | **Price and currency movement were indistinguishable.** `SnapshotPosition` carried only an INR value, so a foreign holding's variance could not be attributed. | Added optional `nativeValue` and `fxRate`. A holding that rises $10k→$12k while the rupee moves ₹80→₹85 now reports ₹160,000 of price effect and ₹60,000 of currency effect, summing exactly to the ₹220,000 INR delta. |
+| 5 | US-3.4 and US-3.6 had no unit coverage at all — their only tests were functional ones blocked on M8. | Added `custom-snapshot.spec.ts` covering the date guard, scope filtering and snapshot-vs-live comparison at the domain level. |
+| 6 | Three tracker rows named test files that were never created. | Paths corrected to the files that actually hold those stories' tests. |
 
 ### Test inventory
 
