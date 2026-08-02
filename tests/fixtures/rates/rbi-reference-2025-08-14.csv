@@ -1,0 +1,4 @@
+# SYNTHETIC FIXTURE — RBI reference rate, used as the first fallback.
+DATE,CURRENCY,RATE
+2025-08-14,USD,83.6800
+2025-08-14,EUR,90.4400

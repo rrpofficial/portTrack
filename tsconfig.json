@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node", "vitest/globals"],
+    "baseUrl": ".",
+    "paths": {
+      "@porttrack/shared-kernel": ["packages/shared-kernel/src/index.ts"],
+      "@porttrack/core-domain": ["packages/core-domain/src/index.ts"],
+      "@porttrack/fx-itbr": ["packages/fx-itbr/src/index.ts"],
+      "@porttrack/tax-engine": ["packages/tax-engine/src/index.ts"],
+      "@porttrack/snapshot": ["packages/snapshot/src/index.ts"],
+      "@porttrack/ingestion": ["packages/ingestion/src/index.ts"],
+      "@porttrack/compliance": ["packages/compliance/src/index.ts"],
+      "@porttrack/pii-masker": ["packages/pii-masker/src/index.ts"],
+      "@porttrack/persistence": ["packages/persistence/src/index.ts"],
+      "@porttrack/adapters-fx": ["packages/adapters-fx/src/index.ts"],
+      "@porttrack/app-services": ["packages/app-services/src/index.ts"],
+      "@porttrack/platform": ["packages/platform/src/index.ts"],
+      "@porttrack/test-kit": ["tests/test-kit/index.ts"]
+    }
+  },
+  "include": ["packages/**/*.ts", "apps/**/*.ts", "tests/**/*.ts", "*.ts"]
+}

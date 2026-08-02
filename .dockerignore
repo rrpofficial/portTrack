@@ -1,0 +1,16 @@
+# Build context hygiene (US-9.6). Keep secrets, local data and history out of layers.
+node_modules
+data
+.env
+.env.*
+*.db
+*.db-wal
+*.db-shm
+.git
+.gitignore
+coverage
+dist
+build
+playwright-report
+test-results
+**/*.tsbuildinfo

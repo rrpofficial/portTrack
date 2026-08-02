@@ -1,0 +1,22 @@
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Local encrypted vault — the bind-mount target (ADR-012). Never committed.
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Tooling
+.vitest/
+playwright-report/
+test-results/
+.DS_Store

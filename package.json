@@ -1,0 +1,39 @@
+{
+  "name": "porttrack",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Global portfolio tracking and Indian tax compliance platform for Indian tax residents",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.18.0",
+  "scripts": {
+    "test": "vitest run",
+    "test:unit": "vitest run packages",
+    "test:functional": "vitest run tests/functional",
+    "test:container": "vitest run --config vitest.container.config.ts",
+    "test:e2e": "playwright test",
+    "test:watch": "vitest",
+    "bench": "vitest bench --run",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "eslint .",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@porttrack/test-kit": "workspace:*",
+    "@types/node": "^22.10.0",
+    "eslint": "^10.8.0",
+    "fast-check": "^3.23.1",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.2.0",
+    "better-sqlite3-multiple-ciphers": "^12.11.1",
+    "decimal.js": "^10.6.0"
+  }
+}
