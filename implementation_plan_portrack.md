@@ -1831,7 +1831,7 @@ Scenario: Operator documentation covers the full lifecycle
 
 ## 7. Implementation Tracker (user-story level)
 
-Status legend: `TODO` · `TESTS_RED` (acceptance tests written and failing) · `WIP` · `REVIEW` · `DONE` · `BLOCKED`
+Status legend: `TODO` · `TESTS_RED` (acceptance tests written and failing) · `WIP` (some, not all, of the story's ACs pass) · `REVIEW` · `DONE` (every AC green) · `BLOCKED`
 
 | ID | Story | Epic | PRD FR | Pri | Pts | Milestone | Deps | Test files | Status |
 |----|-------|------|--------|-----|-----|-----------|------|-----------|--------|
@@ -1858,11 +1858,11 @@ Status legend: `TODO` · `TESTS_RED` (acceptance tests written and failing) · `
 | US-1.14 | Liabilities ledger | 1 | FR-6.2 | P0 | 3 | M2 | 1.1 | `packages/core-domain/test/liabilities.spec.ts` | DONE |
 | US-1.15 | Portfolio valuation engine | 1 | NFR-2 | P0 | 8 | M2 | 1.4–1.14, 2.5 | `packages/core-domain/test/valuation-engine.spec.ts`, `tests/functional/perf/valuation-budget.bench.ts` | DONE |
 | US-2.1 | FX rate store with provenance | 2 | FR-2.1 | P0 | 3 | M2 (pulled fwd) | 8.3 | `packages/fx-itbr/test/rate-store.spec.ts` | DONE |
-| US-2.2 | SBI ITBR ingestion pipeline | 2 | FR-2.1 | P0 | 5 | M3 | 2.1, 8.10 | `packages/fx-itbr/test/sbi-ingestion.spec.ts` | TESTS_RED |
+| US-2.2 | SBI ITBR ingestion pipeline | 2 | FR-2.1 | P0 | 5 | M3 | 2.1, 8.10 | `packages/fx-itbr/test/sbi-ingestion.spec.ts` | DONE |
 | US-2.3 | Fallback hierarchy resolver | 2 | FR-2.1 | P0 | 5 | M2 (pulled fwd) | 2.1 | `packages/fx-itbr/test/fallback-chain.spec.ts` | DONE |
 | US-2.4 | Rule 115 resolver | 2 | FR-2.1 | P0 | 5 | M2 (pulled fwd) | 2.3 | `packages/fx-itbr/test/rule-115.spec.ts` | DONE |
 | US-2.5 | Dual-rate conversion service | 2 | ADR-003 | P0 | 5 | M2 (pulled fwd) | 2.4 | `packages/fx-itbr/test/dual-rate-conversion.spec.ts` | DONE |
-| US-2.6 | Retro rate finalisation | 2 | FR-2.1 | P1 | 8 | M3 | 2.5, 3.1 | `packages/fx-itbr/test/rate-amendment.spec.ts` | TESTS_RED |
+| US-2.6 | Retro rate finalisation | 2 | FR-2.1 | P1 | 8 | M3 | 2.5, 3.1 | `packages/fx-itbr/test/rate-amendment.spec.ts` | DONE |
 | US-3.1 | Immutable content-addressed snapshot | 3 | FR-3.1 | P0 | 5 | M4 | 1.15 | `packages/snapshot/test/immutability.spec.ts` | TESTS_RED |
 | US-3.2 | 31-Mar domestic auto snapshot | 3 | FR-3.1 | P0 | 5 | M4 | 3.1 | `packages/snapshot/test/compliance-scheduler.spec.ts` | TESTS_RED |
 | US-3.3 | 31-Dec foreign auto snapshot | 3 | FR-3.1 | P0 | 3 | M4 | 3.1 | `packages/snapshot/test/compliance-scheduler.spec.ts` | TESTS_RED |
@@ -1892,7 +1892,7 @@ Status legend: `TODO` · `TESTS_RED` (acceptance tests written and failing) · `
 | US-4.8 | Row-level error reporting | 4 | FR-4.1 | P1 | 3 | M6 | 4.1 | `packages/ingestion/test/error-reporting.spec.ts` | TESTS_RED |
 | US-7.1 | Regex PII masking rules | 7 | FR-7.2 | P0 | 8 | M1 (pulled fwd) | 8.1 | `packages/pii-masker/test/regex-rules.spec.ts` | DONE |
 | US-7.2 | NER name masking | 7 | FR-7.2 | P0 | 8 | M7 | 7.1 | `packages/pii-masker/test/ner-names.spec.ts` | TESTS_RED |
-| US-7.3 | Full masking pipeline | 7 | FR-7.1 | P0 | 5 | M2 (pulled fwd) | 7.2 | `packages/pii-masker/test/masking-pipeline.spec.ts` | DONE |
+| US-7.3 | Full masking pipeline | 7 | FR-7.1 | P0 | 5 | M2 (pulled fwd) | 7.2 | `packages/pii-masker/test/masking-pipeline.spec.ts` | WIP |
 | US-7.4 | Fail-closed egress guard | 7 | FR-7.1 | P0 | 5 | M7 | 7.3 | `packages/pii-masker/test/egress-guard.spec.ts` | TESTS_RED |
 | US-7.5 | Deterministic pseudonymisation | 7 | FR-7.2 | P1 | 5 | M7 | 7.3 | `packages/pii-masker/test/pseudonymiser.spec.ts` | TESTS_RED |
 | US-8.5 | Application shell UI | 8 | §3 | P0 | 13 | M8 | 8.3, 1.15 | `tests/e2e/app-shell.spec.ts` | TESTS_RED |
@@ -2029,6 +2029,46 @@ US-2.2 (SBI sheet parsing) and US-2.6 (retroactive amendment) stay red.
 | 6 | `MaskingPipeline.maskPayload` masked free text only, so `borrowerName` survived — regex cannot recognise a person's name. | Structured payloads are masked by **field semantics**; NER (US-7.2) is reserved for free text, where that is the only available signal. |
 | 7 | The `no-restricted-globals: Date` layering rule banned deterministic calendar arithmetic, not just ambient time. | Narrowed to `Date.now()` and zero-argument `new Date()` — the actual non-deterministic surface. |
 | 8 | Test-kit lots defaulted to INR charges even on USD lots, so foreign cost basis threw a currency mismatch. | Charges now default to the lot's own currency. |
+
+### M3 result (2026-08-02) — COMPLETE
+
+```
+pnpm test        467 tests · 258 passing · 209 failing · 0 skipped
+pnpm typecheck   clean
+pnpm lint        clean
+```
+
+`DONE`: US-2.2 and US-2.6, completing EPIC-2. `fx-itbr` is fully green at 33/33.
+
+M3 was 13 points rather than the planned 31 because US-2.1/2.3/2.4/2.5 were pulled into M2, where
+the dual-rate acceptance criteria needed them.
+
+**US-2.6's declared dependency on US-3.1 (snapshots, M4) was broken, not honoured.** A frozen snapshot
+must be *flagged* `supersededRateAvailable`, never rewritten (ADR-006), so the amendment engine only
+needs to know *which* snapshots cover a date. That is an injected `SnapshotIndex` port defaulting to
+"none known"; M4 registers the real one. A genuine data dependency did not have to become a
+build-order dependency.
+
+**Dependency audit** (recommended at the end of M2, run before M4). Only two inversions exist in the
+whole 80-story tracker:
+
+| Story | Milestone | Depends on | Its milestone | Resolution |
+|---|---|---|---|---|
+| US-2.6 | M3 | US-3.1 | M4 | Broken with the `SnapshotIndex` port, above |
+| US-7.3 | M2 | US-7.2 | M7 | Genuine — see the status correction below |
+
+No further inversions remain, so M4 onward can proceed in the planned order.
+
+**Tracker correction.** US-7.3 was marked `DONE` during M2. That was wrong: structured-payload masking
+works, but the story's flagship PRD scenario — masking a person's name in free text — needs NER
+(US-7.2, M7), and its test is still red. Status corrected to `WIP`, and the legend now defines `DONE`
+as *every* AC green. A `DONE` row with a failing acceptance criterion makes the whole tracker
+untrustworthy, which is worse than an honest `WIP`.
+
+**Implementation note.** The SBI sheet parser refuses a sheet whose layout has drifted rather than
+parsing what it can (plan risk R1). A mis-parsed column produces plausible rates that flow straight
+into a capital gains computation; a refused sheet only costs a fallback-chain lookup. Required
+currencies and expected columns are both asserted, and a partial sheet commits nothing.
 
 ### Test inventory
 

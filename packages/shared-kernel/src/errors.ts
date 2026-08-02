@@ -52,6 +52,9 @@ export class RateUnavailableError extends DomainError {
 export class RateConflictError extends DomainError {
   readonly code = 'RATE_CONFLICT';
 }
+export class NotOfficialRateError extends DomainError {
+  readonly code = 'NOT_OFFICIAL_RATE';
+}
 export class SnapshotImmutableError extends DomainError {
   readonly code = 'SNAPSHOT_IMMUTABLE';
 }

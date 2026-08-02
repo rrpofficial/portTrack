@@ -9,17 +9,17 @@ local-first, privacy-first, containerized.
 | [`implementation_plan_portrack.md`](./implementation_plan_portrack.md) | ADRs, 80 user stories, acceptance criteria, DoD, milestone tracker |
 | [`ARCHITECTURE_portrack.md`](./ARCHITECTURE_portrack.md) | C4 component views + 7 data-flow sequence diagrams |
 
-## Current status — M2 complete
+## Current status — M3 complete
 
 ```
-465 tests   250 passing   215 failing   0 skipped
+467 tests   258 passing   209 failing   0 skipped
 typecheck   clean          lint   clean
 ```
 
-Fully green: `core-domain` (the whole asset ledger, 96/96), `shared-kernel`, `persistence`,
-`platform`. The FX engine, dual-rate conversion and regex PII masking are in place too.
+Five packages fully green: `core-domain` (the asset ledger, 96/96), `fx-itbr` (the ITBR rate engine
+and dual-rate conversion, 33/33), `shared-kernel`, `persistence`, `platform`.
 
-The 215 failures are unimplemented stories, each reporting `NotImplementedError ... (US-x.y)`.
+The 209 failures are unimplemented stories, each reporting `NotImplementedError ... (US-x.y)`.
 Next up is **M4 — snapshots** (EPIC-3: immutable content-addressed snapshots, comparison, XIRR).
 
 ## Commands

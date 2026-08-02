@@ -2,8 +2,7 @@
  * fx-itbr — SBI ITBR rate store, fallback chain, Rule 115 and dual-rate conversion.
  * Pure: fetching rate sheets is `adapters-fx`; this package only reasons about them.
  */
-import { notImplemented, type Currency, type IsoDate, type Result } from '@porttrack/shared-kernel';
-import type { DualRate } from '@porttrack/core-domain';
+import type { Currency, IsoDate, Result } from '@porttrack/shared-kernel';
 import { rateStore } from './rate-store.js';
 import {
   convert,
@@ -12,6 +11,16 @@ import {
   resolveWithFallback,
   rule115BasisDate,
 } from './resolvers.js';
+import { parseSbiSheet, type SbiParseOptions } from './sbi-sheet.js';
+import {
+  amendmentLog,
+  amendmentsForDate,
+  clearAmendments,
+  finaliseWithOfficialRate,
+  isProvisional,
+  registerSnapshotIndex,
+  resetSnapshotIndex,
+} from './amendment.js';
 import type { RateRecord } from './types.js';
 
 export * from './types.js';
@@ -37,23 +46,19 @@ export const Rule115Resolver = { basisDateFor: rule115BasisDate, resolve: resolv
 /** US-2.5 — the dual-rate service (ADR-003). */
 export const DualRateConverter = { ratesFor, convert };
 
-/* --------------------------------------------------- not yet implemented */
-
-export interface SbiSheetParserOps {
-  parse(sheet: string): Result<readonly RateRecord[]>;
-}
-export interface RateAmendmentOps {
-  finaliseWithOfficialRate(input: { txnId: string; official: RateRecord }): Result<{
-    readonly amendmentId: string;
-    readonly previous: DualRate;
-    readonly current: DualRate;
-    readonly affectedSnapshots: readonly string[];
-  }>;
-}
-
-export const SbiSheetParser: SbiSheetParserOps = {
-  parse: () => notImplemented('US-2.2', 'SbiSheetParser.parse'),
+/** US-2.2 — SBI rate sheet ingestion. */
+export const SbiSheetParser = {
+  parse: (sheet: string, options?: SbiParseOptions): Result<readonly RateRecord[]> =>
+    parseSbiSheet(sheet, options),
 };
-export const RateAmendment: RateAmendmentOps = {
-  finaliseWithOfficialRate: () => notImplemented('US-2.6', 'RateAmendment.finaliseWithOfficialRate'),
+
+/** US-2.6 — retroactive finalisation of provisional rates. */
+export const RateAmendment = {
+  finaliseWithOfficialRate,
+  isProvisional,
+  log: amendmentLog,
+  forDate: amendmentsForDate,
+  clear: clearAmendments,
+  registerSnapshotIndex,
+  resetSnapshotIndex,
 };

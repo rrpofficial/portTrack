@@ -15,6 +15,8 @@ import { aDualRate, expectErr, expectMoney, expectOk, inr, usd , seedStandardRat
 
 beforeEach(() => {
   seedStandardRates();
+  RateAmendment.clear();
+  RateAmendment.resetSnapshotIndex();
 });
 
 describe('US-2.4 Rule 115 resolver', () => {
@@ -158,11 +160,40 @@ describe('US-2.6 retroactive rate finalisation', () => {
       expect(amendment.amendmentId).toBeTruthy();
     });
 
-    it('flags affected frozen snapshots without mutating them', () => {
+    it('supersedes an RBI fallback with the official SBI rate', () => {
       const amendment = expectOk(
         RateAmendment.finaliseWithOfficialRate({ txnId: 'txn_0001', official }),
       );
-      expect(Array.isArray(amendment.affectedSnapshots)).toBe(true);
+      expect(amendment.previous.valuationRateSource).toBe('RBI_REFERENCE');
+      expect(amendment.current.valuationRateSource).toBe('SBI_ITBR');
+      expect(amendment.current.valuationRate).toBe('83.7500');
+    });
+
+    it('reports the frozen snapshots covering that date without mutating them', () => {
+      // A default index returns nothing, which would make this assertion vacuous.
+      const frozen = Object.freeze({ snapshotId: 'DOM_31MAR2026', frozen: true });
+      RateAmendment.registerSnapshotIndex({
+        snapshotsCovering: (date) => (date === '2025-08-15' ? [frozen.snapshotId] : []),
+      });
+      try {
+        const amendment = expectOk(
+          RateAmendment.finaliseWithOfficialRate({ txnId: 'txn_0001', official }),
+        );
+        expect(amendment.affectedSnapshots).toEqual(['DOM_31MAR2026']);
+        expect(Object.isFrozen(frozen)).toBe(true);
+      } finally {
+        RateAmendment.resetSnapshotIndex();
+      }
+    });
+
+    it('refuses to finalise with a non-SBI rate', () => {
+      expectErr(
+        RateAmendment.finaliseWithOfficialRate({
+          txnId: 'txn_0001',
+          official: { ...official, source: 'RBI_REFERENCE' },
+        }),
+        'NOT_OFFICIAL_RATE',
+      );
     });
   });
 });
