@@ -10,5 +10,8 @@
     "@porttrack/pii-masker": "workspace:*",
     "@porttrack/shared-kernel": "workspace:*",
     "fastify": "*"
+  },
+  "scripts": {
+    "build": "node build.mjs"
   }
 }

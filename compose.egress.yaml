@@ -1,0 +1,20 @@
+# Opt-in outbound network (US-9.3, ADR-010).
+#
+#   docker compose -f compose.yaml -f compose.egress.yaml up
+#
+# The default stack puts the API on an isolated network with no route to the
+# internet. That is deliberate: SBI rate ingestion, NAV refresh and AI insight are
+# the only features that need to leave the machine, and none of them should be
+# reachable by accident.
+#
+# This overlay attaches the API to the edge network so those features can work.
+# Requests still pass through the audited EgressGateway with its allow-list, so
+# enabling the network does not enable arbitrary destinations.
+
+services:
+  api:
+    networks:
+      - internal
+      - edge
+    environment:
+      PORTTRACK_EGRESS: allow

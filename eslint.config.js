@@ -36,6 +36,9 @@ export default tseslint.config(
       '**/coverage/**',
       'tests/fixtures/**',
       'eslint.config.js',
+      // Build scripts run under plain Node and sit outside the TS project.
+      '**/build.mjs',
+      'tests/fixtures/**/*.mjs',
     ],
   },
 
