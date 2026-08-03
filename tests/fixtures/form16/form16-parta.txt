@@ -1,0 +1,9 @@
+# SYNTHETIC FIXTURE — Form 16 Part A quarterly TDS summary.
+FORM 16 PART A
+PAN of the Employee: ABCDE1234F
+TAN of the Deductor: BLRA12345E
+Quarter Q1  Amount 460000.00
+Quarter Q2  Amount 460000.00
+Quarter Q3  Amount 465000.00
+Quarter Q4  Amount 465000.00
+Total TDS 1850000.00

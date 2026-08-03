@@ -5,7 +5,6 @@
  * Every rate and threshold comes from the FY rule table (ADR-005); no rate
  * literal appears in this package's code.
  */
-import { notImplemented, type FinancialYear, type Result } from '@porttrack/shared-kernel';
 import { assertFilingReady, isProvisional, rulesFor } from './rule-table.js';
 import { compare, compute as computeSlab, slabTax, taxableIncome, topMarginalRatePct } from './slabs.js';
 import { apply as applySurcharge } from './surcharge.js';
@@ -14,7 +13,7 @@ import { aggregate, withholdingCredit } from './other-sources.js';
 import { compute as computeForeignTaxCredit } from './foreign-tax-credit.js';
 import { classify as classifyHni } from './hni.js';
 import { installment, schedule } from './advance-tax.js';
-import type { Form16, IncomeProfile } from './types.js';
+import { parse as parseForm16, reconcile, toIncomeProfile } from './form16.js';
 
 export * from './types.js';
 export { AVAILABLE_YEARS } from './rule-table.js';
@@ -43,16 +42,5 @@ export const HniClassifier = { classify: classifyHni };
 /** US-5.11 — DTAA relief. */
 export const ForeignTaxCredit = { compute: computeForeignTaxCredit };
 
-/* --------------------------------------------------- not yet implemented */
-
-export interface Form16ParserOps {
-  parse(buffer: Uint8Array): Result<Form16>;
-  reconcile(form16: Form16): Result<void>;
-  toIncomeProfile(form16: Form16, fy: FinancialYear): IncomeProfile;
-}
-
-export const Form16Parser: Form16ParserOps = {
-  parse: () => notImplemented('US-5.3', 'Form16Parser.parse'),
-  reconcile: () => notImplemented('US-5.3', 'Form16Parser.reconcile'),
-  toIncomeProfile: () => notImplemented('US-5.3', 'Form16Parser.toIncomeProfile'),
-};
+/** US-5.3 — Form 16 Part A / Part B. */
+export const Form16Parser = { parse: parseForm16, reconcile, toIncomeProfile };
