@@ -1,15 +1,14 @@
 /**
- * apps/api — the backend HTTP shell that runs inside the `porttrack-api` container.
+ * apps/api — the backend HTTP shell that runs inside the `porttrack-api`
+ * container (ADR-011).
  *
- * Deliberately thin (US-8.11): every handler delegates to `app-services`. Route
- * files must not import a domain package — a functional test asserts this.
- *
- * ADR-013: this app imports the PII *verifier* only. The masking pipeline runs in
- * the browser bundle; relocating it here would put unmasked PII on the wire.
- *
- * IMPLEMENTATION STATUS: contract only (M0). Implemented at M8.
+ * Deliberately thin: it opens the vault, registers routes and gets out of the
+ * way. `inject` exposes in-process request handling so functional tests exercise
+ * real routing without opening a socket, keeping the suite hermetic.
  */
-import { notImplemented } from '@porttrack/shared-kernel';
+import Fastify, { type FastifyInstance } from 'fastify';
+import { Vault } from '@porttrack/persistence';
+import { registerRoutes } from './routes/index.js';
 
 export interface InjectOptions {
   readonly method: 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -25,7 +24,6 @@ export interface InjectResponse {
 }
 
 export interface ApiApp {
-  /** In-process request injection — no socket, so tests stay hermetic. */
   inject(options: InjectOptions): Promise<InjectResponse>;
   listen(options: { port: number; host: string }): Promise<void>;
   close(): Promise<void>;
@@ -37,6 +35,35 @@ export interface ApiConfig {
   readonly port?: number;
 }
 
-export function buildApp(_config: ApiConfig): Promise<ApiApp> {
-  return notImplemented('US-8.11', 'buildApp');
+export async function buildApp(config: ApiConfig): Promise<ApiApp> {
+  const fastify: FastifyInstance = Fastify({ logger: false });
+  registerRoutes(fastify);
+  await fastify.ready();
+
+  // Opened, not unlocked: the passphrase arrives per session and the process
+  // must be able to report itself live while still refusing to serve data.
+  await Vault.open({ dataDir: config.dataDir, fileName: 'vault.db' });
+
+  return {
+    async inject(options) {
+      const response = await fastify.inject({
+        method: options.method,
+        url: options.url,
+        payload: options.payload as never,
+        headers: options.headers as never,
+      });
+      return {
+        statusCode: response.statusCode,
+        body: response.body,
+        headers: response.headers as Readonly<Record<string, string | string[] | undefined>>,
+      };
+    },
+    async listen(options) {
+      await fastify.listen(options);
+    },
+    async close() {
+      await fastify.close();
+      await Vault.close();
+    },
+  };
 }

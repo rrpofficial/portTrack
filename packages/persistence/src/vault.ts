@@ -80,6 +80,13 @@ export const Vault = {
   open(config: VaultConfig): Promise<Result<VaultHandle>> {
     mkdirSync(config.dataDir, { recursive: true });
     const dbPath = join(config.dataDir, config.fileName);
+
+    // Re-opening the same vault is a no-op. Resetting state here would lock an
+    // already-unlocked session merely because another handle was constructed.
+    if (state?.dbPath === dbPath && state.db !== undefined) {
+      return Promise.resolve(Ok({ schemaVersion: 1, locked: false }));
+    }
+
     const metaPath = `${dbPath}${META_FILE_SUFFIX}`;
     state = { config, dbPath, metaPath, meta: readOrCreateMeta(metaPath) };
     return Promise.resolve(Ok({ schemaVersion: 0, locked: true }));
@@ -90,6 +97,18 @@ export const Vault = {
       return Promise.resolve(Err(new VaultStateError('vault is not open')));
     }
     const current = state;
+
+    /*
+     * An empty passphrase is refused outright. On a BRAND-NEW vault there is no
+     * stored key to check against, so the first unlock silently becomes the one
+     * that sets it — meaning an empty string would quietly create a vault that
+     * anyone can open, and it would look like a successful unlock.
+     */
+    if (passphrase.length === 0) {
+      return Promise.resolve(
+        Err(new VaultUnlockError('a vault passphrase is required and cannot be empty')),
+      );
+    }
 
     const key = deriveKey(passphrase, Buffer.from(current.meta.saltHex, 'hex'), current.meta.params);
     let db: Database.Database | undefined;
@@ -150,5 +169,10 @@ export const Vault = {
 
   isUnlocked(): boolean {
     return Boolean(state?.db);
+  },
+
+  /** Paths of the open vault, so backup can archive the salt alongside it. */
+  currentPaths(): { dbPath: string; metaPath: string } | undefined {
+    return state === undefined ? undefined : { dbPath: state.dbPath, metaPath: state.metaPath };
   },
 };
