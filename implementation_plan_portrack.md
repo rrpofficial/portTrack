@@ -1901,7 +1901,7 @@ Status legend: `TODO` · `TESTS_RED` (acceptance tests written and failing) · `
 | US-3.7 | Allocation shift & movement buckets | 3 | FR-3.1 | P0 | 5 | M4 | 3.5 | `packages/snapshot/test/comparison-engine.spec.ts` | DONE |
 | US-3.8 | XIRR / CAGR / absolute return | 3 | FR-3.1 | P0 | 5 | M4 | 3.5 | `packages/snapshot/test/comparison-engine.spec.ts` | DONE |
 | US-5.2 | Versioned tax rule table | 5 | FR-5.1 | P0 | 5 | M5 | 5.1 | `packages/tax-engine/test/rule-table.spec.ts` | DONE |
-| US-5.3 | Form 16 parser & manual income | 5 | FR-5.1 | P0 | 8 | M5 | 5.2, 7.1 | `packages/tax-engine/test/form16-parser.spec.ts` | TESTS_RED |
+| US-5.3 | Form 16 parser & manual income | 5 | FR-5.1 | P0 | 8 | M6 (folded in) | 5.2, 7.1 | `packages/tax-engine/test/form16-parser.spec.ts` | DONE |
 | US-5.4 | Old vs New regime slabs | 5 | FR-5.1 | P0 | 8 | M5 | 5.3 | `packages/tax-engine/test/regime-comparison.spec.ts` | DONE |
 | US-5.5 | Surcharge, marginal relief, cess | 5 | FR-5.1 | P0 | 8 | M5 | 5.4 | `packages/tax-engine/test/surcharge-relief.spec.ts` | DONE |
 | US-5.6 | HNI classification | 5 | FR-5.1 | P0 | 3 | M5 | 5.5, 1.15 | `packages/tax-engine/test/hni-classification.spec.ts` | DONE |
@@ -1911,14 +1911,14 @@ Status legend: `TODO` · `TESTS_RED` (acceptance tests written and failing) · `
 | US-5.10 | Quarterly advance tax engine | 5 | FR-5.3 | P0 | 13 | M5 | 5.8, 5.9, 5.5 | `packages/tax-engine/test/advance-tax.spec.ts`, `tests/functional/tax/advance-tax-q3.spec.ts` | DONE |
 | US-5.11 | Foreign tax credit / DTAA | 5 | FR-5.1 | P1 | 8 | M5 | 5.10, 1.5 | `packages/tax-engine/test/foreign-tax-credit.spec.ts` | DONE |
 | US-5.12 | Tax computation trace | 5 | FR-5.1 | P1 | 5 | M5 | 5.10 | `packages/tax-engine/test/computation-trace.spec.ts` | DONE |
-| US-4.1 | Ingestion pipeline framework | 4 | FR-4.1 | P0 | 8 | M6 | 8.3 | `packages/ingestion/test/pipeline.spec.ts` | TESTS_RED |
-| US-4.2 | CAMS / KFintech CAS PDF parser | 4 | FR-4.1 | P0 | 13 | M6 | 4.1, 7.1 | `packages/ingestion/test/cams-cas-parser.spec.ts` | TESTS_RED |
-| US-4.3 | Zerodha XLSX + CSV parser | 4 | FR-4.1 | P0 | 8 | M6 | 4.1, 1.3 | `packages/ingestion/test/zerodha-parser.spec.ts` | TESTS_RED |
-| US-4.4 | Vested CSV parser | 4 | FR-4.1 | P0 | 8 | M6 | 4.1, 1.4 | `packages/ingestion/test/vested-parser.spec.ts` | TESTS_RED |
-| US-4.5 | E*TRADE parser | 4 | FR-4.1 | P0 | 8 | M6 | 4.1, 1.4 | `packages/ingestion/test/etrade-parser.spec.ts` | TESTS_RED |
-| US-4.6 | Standardised CSV templates | 4 | FR-4.1 | P0 | 5 | M6 | 4.1 | `packages/ingestion/test/csv-templates.spec.ts` | TESTS_RED |
-| US-4.7 | Idempotent re-import | 4 | FR-4.1 | P0 | 5 | M6 | 4.1 | `packages/ingestion/test/idempotency.spec.ts` | TESTS_RED |
-| US-4.8 | Row-level error reporting | 4 | FR-4.1 | P1 | 3 | M6 | 4.1 | `packages/ingestion/test/error-reporting.spec.ts` | TESTS_RED |
+| US-4.1 | Ingestion pipeline framework | 4 | FR-4.1 | P0 | 8 | M6 | 8.3 | `packages/ingestion/test/pipeline.spec.ts` | DONE |
+| US-4.2 | CAMS / KFintech CAS PDF parser | 4 | FR-4.1 | P0 | 13 | M6 | 4.1, 7.1 | `packages/ingestion/test/cams-cas-parser.spec.ts` | DONE |
+| US-4.3 | Zerodha XLSX + CSV parser | 4 | FR-4.1 | P0 | 8 | M6 | 4.1, 1.3 | `packages/ingestion/test/zerodha-parser.spec.ts` | DONE |
+| US-4.4 | Vested CSV parser | 4 | FR-4.1 | P0 | 8 | M6 | 4.1, 1.4 | `packages/ingestion/test/vested-parser.spec.ts` | DONE |
+| US-4.5 | E*TRADE parser | 4 | FR-4.1 | P0 | 8 | M6 | 4.1, 1.4 | `packages/ingestion/test/etrade-parser.spec.ts` | DONE |
+| US-4.6 | Standardised CSV templates | 4 | FR-4.1 | P0 | 5 | M6 | 4.1 | `packages/ingestion/test/csv-templates.spec.ts` | DONE |
+| US-4.7 | Idempotent re-import | 4 | FR-4.1 | P0 | 5 | M6 | 4.1 | `packages/ingestion/test/idempotency.spec.ts` | DONE |
+| US-4.8 | Row-level error reporting | 4 | FR-4.1 | P1 | 3 | M6 | 4.1 | `packages/ingestion/test/error-reporting.spec.ts` | DONE |
 | US-7.1 | Regex PII masking rules | 7 | FR-7.2 | P0 | 8 | M1 (pulled fwd) | 8.1 | `packages/pii-masker/test/regex-rules.spec.ts` | DONE |
 | US-7.2 | NER name masking | 7 | FR-7.2 | P0 | 8 | M7 | 7.1 | `packages/pii-masker/test/ner-names.spec.ts` | TESTS_RED |
 | US-7.3 | Full masking pipeline | 7 | FR-7.1 | P0 | 5 | M2 (pulled fwd) | 7.2 | `packages/pii-masker/test/masking-pipeline.spec.ts` | WIP |
@@ -2194,6 +2194,40 @@ is marked `VERIFIED`.
 | 3 | **Holding-period boundary tests specified only one endpoint.** A 12-month boundary cannot be asserted without an acquisition date, and the two scenarios needed different ones. | `ExitTransaction` and `LotAllocation` now carry `acquisitionDate`; the tests state both endpoints. |
 | 4 | **The grandfathering test never supplied the FMV it asserted on** — it expected a ₹70 gain from a ₹180 FMV that appeared nowhere. | `LotAllocation.grandfatheredFmv` added and supplied by the test. |
 | 5 | **The rule table read JSON with `node:fs` from a pure domain package** — caught by our own layering lint rule, not by a human. | Rule sets converted to typed TS modules. No I/O, and a malformed slab band is now a compile error rather than a runtime one. |
+
+### M6 result (2026-08-03) — COMPLETE
+
+```
+pnpm test        535 tests · 452 passing · 83 failing · 0 skipped
+pnpm typecheck   clean
+pnpm lint        clean
+```
+
+`ingestion` is green at 29/29. **Eight of eleven packages are green.** US-5.3 (Form 16) was folded in
+from M5, since a Form 16 is the same problem shape as the other statement parsers; `tax-engine` is now
+95/95 and **EPIC-5 is fully complete**.
+
+**The CAS parser really decrypts.** `US-4.2` runs against the encrypted fixture generated in M0,
+implementing the PDF standard security handler (/V 2 /R 3, RC4-128) — algorithms 2, 4/5 and 6 — in
+about a hundred lines rather than taking a native PDF dependency that could log a password. Wrong
+passwords fail with `PDF_DECRYPTION_FAILED` and the attempted password never appears in the error.
+
+**Two PII decisions worth recording:**
+
+- **Folio numbers never enter the pipeline in the clear.** The CAS parser emits a deterministic
+  opaque `folioRef`; the raw folio belongs in the encrypted vault. Duplicate detection still works
+  because the reference is stable.
+- **Form 16 PAN and TAN are stored as opaque references** for the same reason, so a parsed
+  certificate can be handed to an AI payload without a PAN riding along.
+
+**Corrections forced by implementation:**
+
+| # | Finding | Resolution |
+|---|---|---|
+| 1 | **The PDF stream reader attributed every stream to the wrong object.** Searching forward from an object header to the next `stream` keyword found object 4's stream while reporting object 1's number — and since the RC4 key is derived from the object number, decryption produced silent garbage rather than an error. | Each stream is now scoped to the object that encloses it. This is the exact failure mode the parser is meant to prevent, so it is called out in the source. |
+| 2 | **The Form 16 mismatch fixture did not mismatch.** With no Part B present, Part B's total fell back to Part A's, so the two agreed and the reconciliation test passed for the wrong reason. | Fixture rewritten as a combined document where Part A totals ₹1,850,000 against Part B's ₹1,840,000, exactly as FR-5.1 describes. |
+| 3 | Import timestamps from the wall clock would have made re-imports non-identical, breaking both duplicate detection and the determinism test. | Provenance timestamps are derived from the source file, so the same file always parses to the same records. |
+| 4 | RC4 needed byte reads that `noUncheckedIndexedAccess` types as possibly-undefined; the obvious fix was non-null assertions, which DoD D4 forbids. | A total `byteAt` accessor, with a comment explaining that every index is masked to 0-255 so the fallback is unreachable. |
 
 ### Test inventory
 

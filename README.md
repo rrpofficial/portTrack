@@ -9,23 +9,24 @@ local-first, privacy-first, containerized.
 | [`implementation_plan_portrack.md`](./implementation_plan_portrack.md) | ADRs, 80 user stories, acceptance criteria, DoD, milestone tracker |
 | [`ARCHITECTURE_portrack.md`](./ARCHITECTURE_portrack.md) | C4 component views + 7 data-flow sequence diagrams |
 
-## Current status — M5 complete (except the Form 16 parser)
+## Current status — M6 complete
 
 ```
-522 tests   410 passing   112 failing   0 skipped
+535 tests   452 passing   83 failing   0 skipped
 typecheck   clean          lint   clean
 ```
 
-Seven packages fully green: `core-domain` (asset ledger, 119/119), `tax-engine` (slabs, surcharge,
-marginal relief, capital gains, advance tax, 82/82), `fx-itbr` (33/33), `snapshot` (57/57),
-`shared-kernel`, `persistence`, `platform`.
+Eight packages fully green: `core-domain` (asset ledger, 119/119), `tax-engine` (slabs, surcharge,
+capital gains, advance tax, Form 16, 95/95), `snapshot` (57/57), `fx-itbr` (33/33), `ingestion`
+(CAMS/Zerodha/Vested/E*TRADE/templates, 29/29), `shared-kernel`, `persistence`, `platform`.
 
 > ⚠ **Tax rates are PROVISIONAL.** The bundled FY rule sets have the right structure but unverified
 > numbers. Computation works; `TaxRuleTable.assertFilingReady` refuses to emit any filing artifact
 > until a rule set is sourced from the Finance Act and marked `VERIFIED`.
 
-The 112 failures are unimplemented stories, each reporting `NotImplementedError ... (US-x.y)`.
-Next up is **M6 — ingestion** (EPIC-4: CAMS, Zerodha, Vested, E*TRADE parsers and CSV templates).
+The 83 failures are unimplemented stories, each reporting `NotImplementedError ... (US-x.y)`.
+Remaining: **M7** (PII masking: NER, pseudonymisation, egress guard) and **M8** (API, UI, CLI),
+then **M9** containers and **M10** the Schedule FA/AL exports.
 
 ## Commands
 

@@ -1,0 +1,16 @@
+# SYNTHETIC FIXTURE — modelled on a Form 16 text extract. Not a real certificate.
+FORM 16 PART B
+Certificate under section 203 of the Income-tax Act, 1961
+Employee Name: RAJESH SHARMA
+PAN of the Employee: ABCDE1234F
+TAN of the Deductor: BLRA12345E
+Assessment Year: 2026-27
+Financial Year: 2025-26
+1. Gross Salary
+   (a) Salary as per section 17(1)              12000000.00
+2. Less: Allowances exempt under section 10     240000.00
+3. Deductions under Chapter VI-A
+   (a) Section 80C                              150000.00
+   (b) Section 80D                              25000.00
+   Total Chapter VI-A                           175000.00
+4. Total Tax Deducted at Source                 1850000.00

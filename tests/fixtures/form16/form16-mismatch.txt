@@ -1,0 +1,18 @@
+# SYNTHETIC FIXTURE — Part A and Part B disagree, as PRD FR-5.1 describes:
+# Part A quarterly TDS totals 1,850,000 while Part B states 1,840,000.
+FORM 16 PART A
+PAN of the Employee: ABCDE1234F
+TAN of the Deductor: BLRA12345E
+Quarter Q1  Amount 460000.00
+Quarter Q2  Amount 460000.00
+Quarter Q3  Amount 465000.00
+Quarter Q4  Amount 465000.00
+Total TDS 1850000.00
+
+FORM 16 PART B
+1. Gross Salary
+   (a) Salary as per section 17(1)              12000000.00
+2. Less: Allowances exempt under section 10     240000.00
+3. Deductions under Chapter VI-A
+   Total Chapter VI-A                           175000.00
+4. Total Tax Deducted at Source                 1840000.00
