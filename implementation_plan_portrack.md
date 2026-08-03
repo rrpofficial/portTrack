@@ -1926,22 +1926,22 @@ Status legend: `TODO` · `TESTS_RED` (acceptance tests written and failing) · `
 | US-7.5 | Deterministic pseudonymisation | 7 | FR-7.2 | P1 | 5 | M7 | 7.3 | `packages/pii-masker/test/pseudonymiser.spec.ts` | DONE |
 | US-8.5 | Application shell UI | 8 | §3 | P0 | 13 | M8 | 8.3, 1.15 | `tests/e2e/app-shell.spec.ts` | DONE |
 | US-8.6 | Headless CLI runner | 8 | §4.3 | P1 | 5 | M8 | 8.3 | `tests/functional/cli/commands.spec.ts` | DONE |
-| US-8.7 | Performance budget harness | 8 | NFR-2 | P0 | 5 | M8 | 1.15, 3.5 | `tests/functional/perf/budgets.bench.ts` | TESTS_RED |
+| US-8.7 | Performance budget harness | 8 | NFR-2 | P0 | 5 | M8 | 1.15, 3.5 | `tests/functional/perf/budgets.bench.ts` | DONE |
 | US-8.8 | Backup / restore / export | 8 | NFR-1 | P1 | 5 | M8 | 8.2 | `tests/functional/platform/backup-restore.spec.ts` | DONE |
 | US-8.11 | Backend API service | 8 | FR-8.1 | P0 | 8 | M8 | 8.3, 8.9 | `tests/functional/api/routes.spec.ts` | DONE |
-| US-9.1 | Backend container image | 9 | FR-8.1 | P0 | 8 | M9 (skeleton M1) | 8.11 | `tests/container/api-image.spec.ts` | TESTS_RED |
-| US-9.2 | Frontend container image | 9 | FR-8.1 | P0 | 8 | M9 | 8.5, 9.1 | `tests/container/web-image.spec.ts` | TESTS_RED |
-| US-9.3 | Compose stack orchestration | 9 | FR-8.1 | P0 | 8 | M9 (skeleton M1) | 9.1, 9.2 | `tests/container/compose-stack.spec.ts` | TESTS_RED |
-| US-9.4 | Host bind-mount persistence | 9 | FR-8.2 | P0 | 8 | M9 | 9.3, 8.2 | `tests/container/host-persistence.spec.ts` | TESTS_RED |
-| US-9.5 | Host UID/GID ownership mapping | 9 | FR-8.3 | P0 | 5 | M9 | 9.4 | `tests/container/ownership.spec.ts` | TESTS_RED |
-| US-9.6 | Secret handling & image hygiene | 9 | FR-8.3 | P0 | 5 | M9 | 9.1 | `tests/container/image-hygiene.spec.ts` | TESTS_RED |
-| US-9.7 | In-container budgets & E2E | 9 | NFR-2, NFR-4 | P0 | 5 | M9 | 9.3, 8.7 | `tests/container/perf-in-container.spec.ts`, `tests/e2e/*` | TESTS_RED |
-| US-9.8 | Cross-platform & operator docs | 9 | NFR-4 | P1 | 3 | M9 | 9.5, 8.8 | `tests/container/cross-platform.spec.ts` | TESTS_RED |
-| US-6.1 | Peak value computation | 6 | FR-6.1 | P2 | 8 | M10 | 3.4, 2.5 | `packages/compliance/test/peak-value.spec.ts` | TESTS_RED |
-| US-6.2 | Schedule FA Table A3 | 6 | FR-6.1 | P2 | 13 | M10 | 6.1 | `packages/compliance/test/schedule-fa-a3.spec.ts` | TESTS_RED |
-| US-6.3 | Schedule FA Table D | 6 | FR-6.1 | P2 | 5 | M10 | 6.1 | `packages/compliance/test/schedule-fa-d.spec.ts` | TESTS_RED |
-| US-6.4 | Schedule AL generator | 6 | FR-6.2 | P2 | 8 | M10 | 5.6, 1.14, 3.2 | `packages/compliance/test/schedule-al.spec.ts` | TESTS_RED |
-| US-6.5 | ITR-ready JSON/CSV export | 6 | FR-6.1 | P2 | 5 | M10 | 6.2, 6.4 | `packages/compliance/test/itr-export.spec.ts` | TESTS_RED |
+| US-9.1 | Backend container image | 9 | FR-8.1 | P0 | 8 | M9 (skeleton M1) | 8.11 | `tests/container/api-image.spec.ts` | DONE |
+| US-9.2 | Frontend container image | 9 | FR-8.1 | P0 | 8 | M9 | 8.5, 9.1 | `tests/container/web-image.spec.ts` | DONE |
+| US-9.3 | Compose stack orchestration | 9 | FR-8.1 | P0 | 8 | M9 (skeleton M1) | 9.1, 9.2 | `tests/container/compose-stack.spec.ts` | DONE |
+| US-9.4 | Host bind-mount persistence | 9 | FR-8.2 | P0 | 8 | M9 | 9.3, 8.2 | `tests/container/host-persistence.spec.ts` | DONE |
+| US-9.5 | Host UID/GID ownership mapping | 9 | FR-8.3 | P0 | 5 | M9 | 9.4 | `tests/container/ownership.spec.ts` | DONE |
+| US-9.6 | Secret handling & image hygiene | 9 | FR-8.3 | P0 | 5 | M9 | 9.1 | `tests/container/image-hygiene.spec.ts` | DONE |
+| US-9.7 | In-container budgets & E2E | 9 | NFR-2, NFR-4 | P0 | 5 | M9 | 9.3, 8.7 | `tests/container/perf-in-container.spec.ts`, `tests/e2e/*` | DONE |
+| US-9.8 | Cross-platform & operator docs | 9 | NFR-4 | P1 | 3 | M9 | 9.5, 8.8 | `tests/container/cross-platform.spec.ts` | DONE |
+| US-6.1 | Peak value computation | 6 | FR-6.1 | P2 | 8 | M10 | 3.4, 2.5 | `packages/compliance/test/peak-value.spec.ts` | DONE |
+| US-6.2 | Schedule FA Table A3 | 6 | FR-6.1 | P2 | 13 | M10 | 6.1 | `packages/compliance/test/schedule-fa-a3.spec.ts` | DONE |
+| US-6.3 | Schedule FA Table D | 6 | FR-6.1 | P2 | 5 | M10 | 6.1 | `packages/compliance/test/schedule-fa-d.spec.ts` | DONE |
+| US-6.4 | Schedule AL generator | 6 | FR-6.2 | P2 | 8 | M10 | 5.6, 1.14, 3.2 | `packages/compliance/test/schedule-al.spec.ts` | DONE |
+| US-6.5 | ITR-ready JSON/CSV export | 6 | FR-6.1 | P2 | 5 | M10 | 6.2, 6.4 | `packages/compliance/test/itr-export.spec.ts` | DONE |
 
 **Totals:** 80 stories · 460 points · Phase 1 (M0–M9) = 72 stories / 421 pts (of which EPIC-9 = 8 stories /
 50 pts) · Phase 2 = 5 stories / 39 pts (EPIC-6) + backlog.
@@ -2292,6 +2292,51 @@ returns **422 PII_LEAK** for an unmasked payload — the second, independent gat
 downloaded, which the default-deny egress posture blocks. Eleven theme guard tests cover FR-9 from the
 outside instead (tokens resolve, no raw hex, direction never conveyed by colour alone, no external
 font origin), and the API smoke path is verified end to end. US-8.7's benchmarks run under `pnpm bench`.
+
+### M9 + M10 result (2026-08-03) — ALL MILESTONES COMPLETE
+
+```
+pnpm test            552 tests · 552 passing · 0 failing · 0 skipped
+pnpm test:container   38 tests ·  38 passing · 0 failing   (real Docker stack)
+pnpm bench           valuation 4.77 ms (budget 1,500) · delta 3.25 ms (budget 2,000)
+pnpm typecheck       clean          pnpm lint  clean
+docker compose up    both containers healthy
+```
+
+**All eighty tracker rows are `DONE`.** Every one of the eleven packages is green.
+
+**M10 — compliance.** Schedule FA (Tables A3 and D), Schedule AL and the ITR-ready export.
+Two distinctions carry the package and are stated in the source because both are easy to get
+backwards: **Schedule FA runs on the CALENDAR year** while everything else here is FY-aligned, and
+**Schedule AL reports COST of acquisition** while the rest of the product reports market value.
+
+**M9 — containers.** `docker compose up` on a host with only Docker installed brings up both
+services. Verified against the running stack, not asserted from the compose file:
+
+| Requirement | Evidence |
+|---|---|
+| FR-8.2 bind mount, not a Docker volume | `Type=bind Source=/tmp/porttrack-m9-data` |
+| Vault on the host disk, owned by the host user | `vault.db` present, owned `rrpofficial`, not root |
+| Survives `compose down` / `up` | md5 identical before and after; unlocks with the same passphrase |
+| FR-8.3 non-root | api and web both UID 1000 |
+| FR-8.3 read-only rootfs | write to `/app` refused; data dir and `/tmp` writable |
+| ADR-010 no egress | outbound from the API times out — the network has no gateway |
+| SPA + `/api` proxy + deep links | index served, `/api/health/live` proxied, `/snapshots/X` → 200 |
+
+**Corrections forced by implementation:**
+
+| # | Finding | Resolution |
+|---|---|---|
+| 1 | **The API would not boot in the container.** Sources use NodeNext `./app.js` specifiers, which Node's type-stripping loader cannot resolve — it looks for a `.js` file that never existed. | Bundled ahead of time with esbuild. A production image should not depend on an experimental flag to start. |
+| 2 | **Bundling everything broke Fastify**, whose CommonJS internals call `require` inside an ESM wrapper. | Only our own code is bundled; third-party packages stay external and resolve from `node_modules`. Bundle fell from 1.5 MB to 96 KB. |
+| 3 | **`internal: true` on the shared network made the published port unreachable.** Docker does not route host port publishing onto an internal network. | Split topology: `edge` carries the web container's published port, `internal` (no gateway) carries the API. The API is now *more* isolated than the original single-network design, not less. |
+| 4 | **The runtime image was 430 MB** — it shipped the entire dev dependency tree. | A separate minimal dependency tree built from `docker/runtime-package.json`. Dev tooling is absent by construction rather than pruned afterwards and hoped for. **246 MB.** |
+| 5 | **Container persistence tests asserted on a database that did not exist**, because the vault file is only created on unlock. | The suite unlocks after bring-up, and a new test proves the restored vault still opens with the original passphrase — a file that merely exists proves nothing. |
+| 6 | Base images were pinned to a placeholder digest. | Real digests resolved and pinned for both `node:22-bookworm-slim` and `caddy:2-alpine`. |
+
+**US-8.7 note.** The NFR-2 budgets are *enforced* by assertions in the unit suite and in the
+container suite; `pnpm bench` exists to show headroom rather than to gate the build. Current margin
+is roughly 300× on valuation and 600× on snapshot delta, so the budgets are not close to binding.
 
 ### Test inventory
 

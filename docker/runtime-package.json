@@ -1,0 +1,14 @@
+{
+  "name": "porttrack-api-runtime",
+  "private": true,
+  "type": "module",
+  "description": "Exactly the packages the bundled API needs at runtime. Everything else — our own code — is inlined by esbuild, and everything dev-only is absent by construction rather than pruned after the fact.",
+  "dependencies": {
+    "@noble/hashes": "^2.2.0",
+    "better-sqlite3-multiple-ciphers": "^12.11.1",
+    "decimal.js": "^10.6.0",
+    "fastify": "^5.11.0",
+    "wink-eng-lite-web-model": "^1.8.1",
+    "wink-nlp": "^2.4.0"
+  }
+}

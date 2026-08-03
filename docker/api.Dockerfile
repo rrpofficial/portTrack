@@ -33,6 +33,13 @@ RUN pnpm rebuild better-sqlite3-multiple-ciphers
 # should not depend on an experimental flag to boot.
 RUN node apps/api/build.mjs
 
+# A separate, minimal dependency tree for the runtime. The bundle inlines all of
+# our own code, so the image needs only the handful of external packages listed
+# here — building it fresh keeps dev tooling out by construction rather than
+# pruning it away afterwards and hoping nothing was missed.
+COPY docker/runtime-package.json /runtime/package.json
+RUN cd /runtime && npm install --omit=dev --no-audit --no-fund --loglevel=error
+
 # -------------------------------------------------------------- runtime stage
 FROM node:22-bookworm-slim@sha256:f32b81066cde10a75dbac96646099533316d94bac4150c55da1636e1f0ffdc46 AS runtime
 
@@ -48,16 +55,12 @@ RUN groupadd --gid "${PORTTRACK_GID}" porttrack 2>/dev/null || true \
 
 WORKDIR /app
 
-# Only the bundle and the externals it needs — no sources, no tests, no compiler.
-COPY --from=build --chown=${PORTTRACK_UID}:${PORTTRACK_GID} /build/node_modules ./node_modules
+# Only the bundle and its minimal runtime tree — no sources, no tests, no compiler.
+COPY --from=build --chown=${PORTTRACK_UID}:${PORTTRACK_GID} /runtime/node_modules ./node_modules
 COPY --from=build --chown=${PORTTRACK_UID}:${PORTTRACK_GID} /build/apps/api/dist ./dist
 COPY --chown=${PORTTRACK_UID}:${PORTTRACK_GID} docker/entrypoint-api.sh /usr/local/bin/entrypoint-api.sh
 
 RUN chmod +x /usr/local/bin/entrypoint-api.sh \
- # Tests, sourcemaps and build tooling have no business in a runtime image.
- && rm -rf ./node_modules/.cache ./node_modules/typescript ./node_modules/.bin/tsc \
-           ./node_modules/vite ./node_modules/vitest ./node_modules/esbuild \
- && find ./node_modules -type d -name test -prune -exec rm -rf {} + 2>/dev/null || true \
  && find . -name '*.map' -delete
 
 USER ${PORTTRACK_UID}:${PORTTRACK_GID}

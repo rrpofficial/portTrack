@@ -34,9 +34,33 @@ const compose = (args: string[], env: Record<string, string> = {}) =>
 const uid = String(process.getuid?.() ?? 1000);
 const gid = String(process.getgid?.() ?? 1000);
 
+/**
+ * Creates the database on the host mount. The vault file does not exist until a
+ * passphrase is supplied — migrations run on unlock — so a stack that has merely
+ * started has nothing on disk yet, and every persistence assertion below would
+ * be measuring an absence.
+ */
+function unlockVault(): void {
+  sh('docker', [
+    'compose',
+    'exec',
+    '-T',
+    'web',
+    'wget',
+    '-q',
+    '-O',
+    '-',
+    '--header=content-type: application/json',
+    '--post-data',
+    '{"passphrase":"correct horse battery staple"}',
+    'http://localhost:80/api/vault/unlock',
+  ]);
+}
+
 beforeAll(() => {
   hostDataDir = mkdtempSync(join(tmpdir(), 'porttrack-data-'));
   compose(['up', '--build', '-d', '--wait'], { PORTTRACK_UID: uid, PORTTRACK_GID: gid });
+  unlockVault();
 }, COMPOSE_TIMEOUT);
 
 afterAll(() => {
@@ -160,10 +184,17 @@ describe('@container US-9.4 — host-native bind-mount persistence (FR-8.2, ADR-
         '-T',
         'api',
         'node',
+        '--input-type=module',
         '-e',
-        "process.stdout.write(require('node:fs').existsSync('/var/lib/porttrack/vault.db')?'yes':'no')",
+        "import {existsSync} from 'node:fs'; process.stdout.write(existsSync('/var/lib/porttrack/vault.db')?'yes':'no')",
       ]);
       expect(body).toBe('yes');
+    });
+
+    it('unlocks with the same passphrase after the restart', () => {
+      // The real proof of persistence: the salt and ciphertext both survived, so
+      // the original key still derives. A file that merely exists proves nothing.
+      expect(() => { unlockVault(); }).not.toThrow();
     });
   });
 
