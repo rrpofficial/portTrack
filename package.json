@@ -35,6 +35,8 @@
   "dependencies": {
     "@noble/hashes": "^2.2.0",
     "better-sqlite3-multiple-ciphers": "^12.11.1",
-    "decimal.js": "^10.6.0"
+    "decimal.js": "^10.6.0",
+    "wink-eng-lite-web-model": "^1.8.1",
+    "wink-nlp": "^2.4.0"
   }
 }

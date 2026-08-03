@@ -9,24 +9,27 @@ local-first, privacy-first, containerized.
 | [`implementation_plan_portrack.md`](./implementation_plan_portrack.md) | ADRs, 80 user stories, acceptance criteria, DoD, milestone tracker |
 | [`ARCHITECTURE_portrack.md`](./ARCHITECTURE_portrack.md) | C4 component views + 7 data-flow sequence diagrams |
 
-## Current status — M6 complete
+## Current status — M7 complete
 
 ```
-535 tests   452 passing   83 failing   0 skipped
+540 tests   473 passing   67 failing   0 skipped
 typecheck   clean          lint   clean
 ```
 
-Eight packages fully green: `core-domain` (asset ledger, 119/119), `tax-engine` (slabs, surcharge,
-capital gains, advance tax, Form 16, 95/95), `snapshot` (57/57), `fx-itbr` (33/33), `ingestion`
-(CAMS/Zerodha/Vested/E*TRADE/templates, 29/29), `shared-kernel`, `persistence`, `platform`.
+Nine packages fully green: `core-domain` (119), `tax-engine` (95), `snapshot` (57), `pii-masker`
+(37), `shared-kernel` (36), `fx-itbr` (33), `persistence` (30), `ingestion` (29), `platform` (17).
 
 > ⚠ **Tax rates are PROVISIONAL.** The bundled FY rule sets have the right structure but unverified
 > numbers. Computation works; `TaxRuleTable.assertFilingReady` refuses to emit any filing artifact
 > until a rule set is sourced from the Finance Act and marked `VERIFIED`.
 
-The 83 failures are unimplemented stories, each reporting `NotImplementedError ... (US-x.y)`.
-Remaining: **M7** (PII masking: NER, pseudonymisation, egress guard) and **M8** (API, UI, CLI),
-then **M9** containers and **M10** the Schedule FA/AL exports.
+> ⚠ **Name masking over-masks by design.** A missed name is a PII leak; an over-masked one is a
+> slightly less useful prompt. The fail-closed egress guard catches structured identifiers and
+> pipeline bugs, but it **cannot** catch a name the detector never recognised — see `verifier.ts`.
+
+The 67 failures are unimplemented stories, each reporting `NotImplementedError ... (US-x.y)`.
+Remaining: **M8** (API, UI, CLI — the first runnable application), **M9** containers, **M10**
+the Schedule FA/AL exports.
 
 ## Commands
 

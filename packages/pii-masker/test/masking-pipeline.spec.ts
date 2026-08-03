@@ -5,8 +5,9 @@
  * US-7.4 — Fail-closed egress guard (ADR-007)
  * US-7.5 — Deterministic pseudonymisation
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  EntityDetector,
   MaskingPipeline,
   NerMasker,
   PiiVerifier,
@@ -204,16 +205,21 @@ describe('US-7.4 fail-closed egress guard (ADR-007)', () => {
 });
 
 describe('US-7.5 deterministic pseudonymisation', () => {
+  // Token numbering is per session, so each scenario starts from a clean map.
+  beforeEach(() => {
+    Pseudonymiser.reset();
+  });
+
   describe('Scenario: The same entity maps to the same token within one session', () => {
     const text = `${SYNTHETIC.PERSON} lent to ${SYNTHETIC.PERSON_2}; ${SYNTHETIC.PERSON} again; ${SYNTHETIC.PERSON} once more`;
 
     it('assigns one stable token to the repeated person', () => {
-      const { masked } = Pseudonymiser.tokenise(text, RegexRules.detect(text));
+      const { masked } = Pseudonymiser.tokenise(text, EntityDetector.detectEntities(text));
       expect(masked.match(/\[REDACTED_NAME_1\]/g)).toHaveLength(3);
     });
 
     it('assigns a different token to a different person', () => {
-      const { masked } = Pseudonymiser.tokenise(text, RegexRules.detect(text));
+      const { masked } = Pseudonymiser.tokenise(text, EntityDetector.detectEntities(text));
       expect(masked).toContain('[REDACTED_NAME_2]');
     });
   });
@@ -221,14 +227,50 @@ describe('US-7.5 deterministic pseudonymisation', () => {
   describe('Scenario: The reversal map never leaves the device', () => {
     it('is not part of the masked output', () => {
       const text = `Loan to ${SYNTHETIC.PERSON}`;
-      const { masked } = Pseudonymiser.tokenise(text, RegexRules.detect(text));
+      const { masked } = Pseudonymiser.tokenise(text, EntityDetector.detectEntities(text));
       expect(masked).not.toContain(SYNTHETIC.PERSON);
     });
 
     it('rehydrates locally back to the original text', () => {
       const text = `Loan to ${SYNTHETIC.PERSON}`;
-      const { masked } = Pseudonymiser.tokenise(text, RegexRules.detect(text));
+      const { masked } = Pseudonymiser.tokenise(text, EntityDetector.detectEntities(text));
       expect(Pseudonymiser.rehydrate(masked)).toBe(text);
     });
+  });
+});
+
+describe('ADR-007 limits of the fail-closed guard, stated explicitly', () => {
+  /**
+   * The plan originally claimed the egress guard was the backstop for NER false
+   * negatives (risk R5). It is not, and cannot be: a PAN has a shape the guard can
+   * recognise, a name does not. These tests pin what the guard genuinely does and
+   * does not protect, so nobody re-derives the wrong assurance from a green suite.
+   */
+  it('catches a structured identifier the pipeline failed to mask', () => {
+    expect(PiiVerifier.assertClean(`leaked ${SYNTHETIC.PAN}`).ok).toBe(false);
+  });
+
+  it('catches a name the pipeline failed to mask, by re-running detection', () => {
+    // Guards against a broken pipeline — not against a detector blind spot.
+    expect(PiiVerifier.assertClean(`Analyze for ${SYNTHETIC.PERSON}`).ok).toBe(false);
+  });
+
+  it('cannot catch a name the detector never recognises', () => {
+    // A single lowercase token is indistinguishable from an ordinary word. The
+    // guard passes it, which is precisely why the detector over-masks by default
+    // and why structured payloads are masked by field semantics instead.
+    expect(PiiVerifier.assertClean('analyze for rajesh').ok).toBe(true);
+  });
+
+  it('over-masks an unknown proper noun rather than risk a leak', () => {
+    expect(NerMasker.maskPersonNames('Payment to Anantharaman').masked).toContain(
+      '[REDACTED_NAME]',
+    );
+  });
+
+  it('still preserves tickers, so over-masking does not destroy the prompt', () => {
+    const { masked } = NerMasker.maskPersonNames('holding TCS and INFY');
+    expect(masked).toContain('TCS');
+    expect(masked).toContain('INFY');
   });
 });

@@ -9,7 +9,9 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@porttrack/shared-kernel": "workspace:*"
+    "@porttrack/shared-kernel": "workspace:*",
+    "wink-eng-lite-web-model": "*",
+    "wink-nlp": "*"
   },
   "devDependencies": {
     "@porttrack/test-kit": "workspace:*"
