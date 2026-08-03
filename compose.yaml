@@ -1,0 +1,91 @@
+# portTrack — full stack (US-9.3, PRD FR-8.1/8.2/8.3)
+#
+#   docker compose up
+#
+# Two containers, one published port, and your database on your own disk.
+#
+# The data directory is a BIND MOUNT, deliberately not a named volume (ADR-012).
+# A named volume lives under /var/lib/docker, is owned by root, is invisible to
+# your backup tooling and disappears to `docker volume prune`. A bind mount puts
+# vault.db at a path you chose, owned by you — which is what "native OS disk
+# volume" in FR-8.2 actually means.
+
+name: porttrack
+
+services:
+  api:
+    container_name: porttrack-api
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+      args:
+        PORTTRACK_UID: ${PORTTRACK_UID:-1000}
+        PORTTRACK_GID: ${PORTTRACK_GID:-1000}
+    image: porttrack-api:test
+    user: "${PORTTRACK_UID:-1000}:${PORTTRACK_GID:-1000}"
+    environment:
+      PORTTRACK_DATA_DIR: /var/lib/porttrack
+      PORT: "8080"
+    volumes:
+      # Your disk, your path, your ownership.
+      - ${PORTTRACK_DATA_DIR:-./data}:/var/lib/porttrack
+    # Read-only root filesystem: the ONLY writable paths are the bind mount above
+    # and the tmpfs below, so nothing can accumulate in the container layer.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # No published port. The API is reachable only from the web container, and it
+    # sits ONLY on the internal network, so it has no route to the internet at all.
+    expose:
+      - "8080"
+    networks:
+      - internal
+    restart: unless-stopped
+
+  web:
+    container_name: porttrack-web
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      args:
+        PORTTRACK_UID: ${PORTTRACK_UID:-1000}
+        PORTTRACK_GID: ${PORTTRACK_GID:-1000}
+    image: porttrack-web:test
+    user: "${PORTTRACK_UID:-1000}:${PORTTRACK_GID:-1000}"
+    ports:
+      - "${PORTTRACK_WEB_PORT:-5173}:80"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /config
+      - /data
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      api:
+        # Waits for readiness, not merely for the process to exist, so the first
+        # request cannot land on a backend that has not finished migrating.
+        condition: service_healthy
+    networks:
+      - edge
+      - internal
+    restart: unless-stopped
+
+networks:
+  # Publishing a host port onto an `internal` network does not work, so the web
+  # container needs a normal bridge for inbound traffic. It serves static files
+  # and proxies; it holds no portfolio data.
+  edge:
+    driver: bridge
+
+  internal:
+    # Egress is denied by default (ADR-010), and the API sits only here. This is
+    # not the application policing itself — the network has no route out, so a
+    # compromised dependency inside the API cannot exfiltrate a vault even if it
+    # tries. Rate and NAV refresh require compose.egress.yaml as well.
+    internal: true
+    driver: bridge

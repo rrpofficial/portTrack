@@ -41,12 +41,81 @@ const domesticSnapshot: Snapshot = {
   contentHash: 'sha256:dom31mar2026',
 };
 
-const dates = (from: string, days: number) =>
+const dates = (from: string, days: number): string[] =>
   Array.from({ length: days }, (_, i) => {
     const d = new Date(from);
     d.setUTCDate(d.getUTCDate() + i);
     return d.toISOString().slice(0, 10);
   });
+
+/**
+ * A snapshot carries values, not disclosure detail — it has no acquisition date,
+ * no dividend history and no daily series. Schedule FA needs all three, so the
+ * scenarios supply them explicitly rather than pretending a snapshot could.
+ */
+const series = (from: string, days: number, quantity: string, price: string) => {
+  const list = dates(from, days);
+  return {
+    dailyQuantities: new Map(list.map((d) => [d, quantity])),
+    dailyPrices: new Map(list.map((d) => [d, usd(price)])),
+    dailyRates: new Map(list.map((d) => [d, '83.00'])),
+  };
+};
+
+const AAPL_HOLDING = {
+  assetId: 'ast_aapl',
+  countryCode: 'US',
+  entityName: 'Apple Inc.',
+  address: 'One Apple Park Way, Cupertino CA',
+  natureOfEntity: 'Listed company',
+  acquisitionDate: '2025-01-01',
+  initialInvestment: usd('17250'),
+  ...series('2025-01-01', 365, '100', '200'),
+  closingValueNative: usd('24000'),
+  closingRate: '83.50',
+  grossDividend: usd('500'),
+  grossProceeds: usd('7200'),
+};
+
+/** Acquired part-way through the year: the peak must cover only the held period. */
+const MSFT_HOLDING = {
+  ...AAPL_HOLDING,
+  assetId: 'ast_msft',
+  entityName: 'Microsoft Corporation',
+  acquisitionDate: '2025-08-01',
+  ...series('2025-01-01', 365, '50', '400'),
+  closingValueNative: usd('20000'),
+  grossDividend: usd('0'),
+  grossProceeds: usd('0'),
+};
+
+const CUSTODIAL_ACCOUNT = {
+  countryCode: 'US',
+  institutionName: 'Vested Custodial Services',
+  accountNumber: '1208160000123456',
+  accountOpenDate: '2023-04-01',
+  peakBalance: usd('12000'),
+  closingBalance: usd('8000'),
+  closingRate: '83.50',
+};
+
+const AL_ITEMS = [
+  {
+    head: 'IMMOVABLE_PROPERTY' as const,
+    description: 'Apartment, Bengaluru',
+    costOfAcquisition: inr('15900000'),
+  },
+  { head: 'FINANCIAL_ASSETS' as const, description: 'Listed equity', costOfAcquisition: inr('4200000') },
+  { head: 'CASH_IN_HAND' as const, description: 'Cash', costOfAcquisition: inr('250000') },
+  {
+    head: 'LOANS_AND_ADVANCES' as const,
+    description: 'Hand loan receivable',
+    costOfAcquisition: inr('5000000'),
+  },
+  { head: 'JEWELLERY' as const, description: 'Gold', costOfAcquisition: inr('900000') },
+  { head: 'VEHICLES' as const, description: 'Car', costOfAcquisition: inr('1800000') },
+  { head: 'LIABILITIES' as const, description: 'Home loan', costOfAcquisition: inr('8000000') },
+];
 
 describe('US-6.1 peak value computation', () => {
   describe('Scenario: Peak holding value is the maximum daily value in the calendar year', () => {
@@ -105,7 +174,7 @@ describe('US-6.2 Schedule FA Table A3', () => {
   describe('Scenario: Generating Schedule FA output for US stocks (PRD FR-6 AC)', () => {
     it('reports the peak holding value in both USD and INR for the calendar year', () => {
       const rows = expectOk(
-        ScheduleFaGenerator.tableA3({ foreignSnapshot, calendarYear: 2025 }),
+        ScheduleFaGenerator.tableA3({ foreignSnapshot, calendarYear: 2025, holdings: [AAPL_HOLDING, MSFT_HOLDING] }),
       );
       expect(rows[0]?.peakValueNative.currency).toBe('USD');
       expect(rows[0]?.peakValueInr.currency).toBe('INR');
@@ -113,14 +182,14 @@ describe('US-6.2 Schedule FA Table A3', () => {
 
     it('computes the closing value on 2025-12-31 using the SBI ITBR rate', () => {
       const rows = expectOk(
-        ScheduleFaGenerator.tableA3({ foreignSnapshot, calendarYear: 2025 }),
+        ScheduleFaGenerator.tableA3({ foreignSnapshot, calendarYear: 2025, holdings: [AAPL_HOLDING, MSFT_HOLDING] }),
       );
       expect(rows[0]?.closingValueInr.currency).toBe('INR');
     });
 
     it('produces a Table A3 structure with all mandated columns', () => {
       const rows = expectOk(
-        ScheduleFaGenerator.tableA3({ foreignSnapshot, calendarYear: 2025 }),
+        ScheduleFaGenerator.tableA3({ foreignSnapshot, calendarYear: 2025, holdings: [AAPL_HOLDING, MSFT_HOLDING] }),
       );
       expect(Object.keys(rows[0] ?? {})).toEqual(
         expect.arrayContaining([
@@ -139,7 +208,7 @@ describe('US-6.2 Schedule FA Table A3', () => {
   describe('Scenario: Table A3 uses the CALENDAR year, not the financial year', () => {
     it('reports gross dividends and gross proceeds for 1-Jan to 31-Dec', () => {
       const rows = expectOk(
-        ScheduleFaGenerator.tableA3({ foreignSnapshot, calendarYear: 2025 }),
+        ScheduleFaGenerator.tableA3({ foreignSnapshot, calendarYear: 2025, holdings: [AAPL_HOLDING, MSFT_HOLDING] }),
       );
       expect(rows[0]?.grossDividendInr).toBeDefined();
       expect(rows[0]?.grossProceedsInr).toBeDefined();
@@ -149,7 +218,7 @@ describe('US-6.2 Schedule FA Table A3', () => {
   describe('Scenario: Assets held for part of the year report the acquisition date', () => {
     it('reports the 2025-08-01 acquisition date and a peak over the held period only', () => {
       const rows = expectOk(
-        ScheduleFaGenerator.tableA3({ foreignSnapshot, calendarYear: 2025 }),
+        ScheduleFaGenerator.tableA3({ foreignSnapshot, calendarYear: 2025, holdings: [AAPL_HOLDING, MSFT_HOLDING] }),
       );
       const partial = rows.find((r) => r.acquisitionDate === '2025-08-01');
       expect(partial).toBeDefined();
@@ -160,14 +229,14 @@ describe('US-6.2 Schedule FA Table A3', () => {
 describe('US-6.3 Schedule FA Table D', () => {
   describe('Scenario: Foreign custodial account reports peak and closing balance', () => {
     it('reports institution name, peak balance and closing balance in INR', () => {
-      const rows = expectOk(ScheduleFaGenerator.tableD({ foreignSnapshot, calendarYear: 2025 }));
+      const rows = expectOk(ScheduleFaGenerator.tableD({ foreignSnapshot, calendarYear: 2025, accounts: [CUSTODIAL_ACCOUNT] }));
       expect(rows[0]?.institutionName).toBeTruthy();
       expect(rows[0]?.peakBalanceInr.currency).toBe('INR');
       expect(rows[0]?.closingBalanceInr.currency).toBe('INR');
     });
 
     it('stores the account number as a masked reference, never in the clear', () => {
-      const rows = expectOk(ScheduleFaGenerator.tableD({ foreignSnapshot, calendarYear: 2025 }));
+      const rows = expectOk(ScheduleFaGenerator.tableD({ foreignSnapshot, calendarYear: 2025, accounts: [CUSTODIAL_ACCOUNT] }));
       expectNoPii(JSON.stringify(rows));
     });
   });
@@ -181,6 +250,7 @@ describe('US-6.4 Schedule AL', () => {
           domesticSnapshot,
           totalIncome: inr('6000000'),
           assessmentYear: '2026-27',
+          items: AL_ITEMS,
         }),
       );
       expectMoney(al.immovableProperty.total, inr('15900000'));
@@ -194,6 +264,7 @@ describe('US-6.4 Schedule AL', () => {
           domesticSnapshot,
           totalIncome: inr('4000000'),
           assessmentYear: '2026-27',
+          items: AL_ITEMS,
         }),
       );
       expect(al.required).toBe(false);
@@ -206,6 +277,7 @@ describe('US-6.4 Schedule AL', () => {
           domesticSnapshot,
           totalIncome: inr('6000000'),
           assessmentYear: '2026-27',
+          items: AL_ITEMS,
         }),
       );
       expect(al.required).toBe(true);
@@ -219,6 +291,7 @@ describe('US-6.4 Schedule AL', () => {
           domesticSnapshot,
           totalIncome: inr('6000000'),
           assessmentYear: '2026-27',
+          items: AL_ITEMS,
         }),
       );
       for (const head of [
@@ -241,6 +314,7 @@ describe('US-6.4 Schedule AL', () => {
           domesticSnapshot,
           totalIncome: inr('6000000'),
           assessmentYear: '2026-27',
+          items: AL_ITEMS,
         }),
       );
       expect(Number(al.liabilities.total.amount)).toBeGreaterThanOrEqual(0);
@@ -250,7 +324,14 @@ describe('US-6.4 Schedule AL', () => {
 
 describe('US-6.5 ITR-ready export', () => {
   describe('Scenario: Exports validate against the declared schema', () => {
-    const rows = () => expectOk(ScheduleFaGenerator.tableA3({ foreignSnapshot, calendarYear: 2025 }));
+    const rows = () =>
+      expectOk(
+        ScheduleFaGenerator.tableA3({
+          foreignSnapshot,
+          calendarYear: 2025,
+          holdings: [AAPL_HOLDING, MSFT_HOLDING],
+        }),
+      );
 
     it('produces JSON that validates against the bundled Schedule FA schema', () => {
       expectOk(ItrExporter.validate(ItrExporter.toJson(rows()), 'schedule-fa-a3'));

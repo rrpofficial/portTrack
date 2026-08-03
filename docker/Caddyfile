@@ -1,0 +1,37 @@
+# porttrack-web (US-9.2, US-9.3)
+#
+# Serves the SPA and reverse-proxies /api to the backend over the internal
+# bridge network. The API publishes no host port, so this is the only way in.
+
+:80 {
+	# /api first: without this the SPA fallback below would swallow API paths
+	# and return index.html for a JSON request.
+	handle /api/* {
+		reverse_proxy porttrack-api:8080
+	}
+
+	handle {
+		root * /srv
+		encode gzip zstd
+		# History fallback, so a deep link like /snapshots/DOM_31MAR2026 loads the
+		# app rather than 404ing on a path that only exists client-side.
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		# No external origins are permitted: fonts, scripts and styles are all
+		# bundled (FR-9.3), and connect-src is same-origin so a compromised
+		# dependency cannot exfiltrate portfolio data.
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		X-Frame-Options "DENY"
+		-Server
+	}
+
+	log {
+		output stderr
+		format console
+	}
+}
