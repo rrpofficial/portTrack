@@ -1920,10 +1920,10 @@ Status legend: `TODO` · `TESTS_RED` (acceptance tests written and failing) · `
 | US-4.7 | Idempotent re-import | 4 | FR-4.1 | P0 | 5 | M6 | 4.1 | `packages/ingestion/test/idempotency.spec.ts` | DONE |
 | US-4.8 | Row-level error reporting | 4 | FR-4.1 | P1 | 3 | M6 | 4.1 | `packages/ingestion/test/error-reporting.spec.ts` | DONE |
 | US-7.1 | Regex PII masking rules | 7 | FR-7.2 | P0 | 8 | M1 (pulled fwd) | 8.1 | `packages/pii-masker/test/regex-rules.spec.ts` | DONE |
-| US-7.2 | NER name masking | 7 | FR-7.2 | P0 | 8 | M7 | 7.1 | `packages/pii-masker/test/ner-names.spec.ts` | TESTS_RED |
-| US-7.3 | Full masking pipeline | 7 | FR-7.1 | P0 | 5 | M2 (pulled fwd) | 7.2 | `packages/pii-masker/test/masking-pipeline.spec.ts` | WIP |
-| US-7.4 | Fail-closed egress guard | 7 | FR-7.1 | P0 | 5 | M7 | 7.3 | `packages/pii-masker/test/egress-guard.spec.ts` | TESTS_RED |
-| US-7.5 | Deterministic pseudonymisation | 7 | FR-7.2 | P1 | 5 | M7 | 7.3 | `packages/pii-masker/test/pseudonymiser.spec.ts` | TESTS_RED |
+| US-7.2 | NER name masking | 7 | FR-7.2 | P0 | 8 | M7 | 7.1 | `packages/pii-masker/test/ner-names.spec.ts` | DONE |
+| US-7.3 | Full masking pipeline | 7 | FR-7.1 | P0 | 5 | M2 (pulled fwd) | 7.2 | `packages/pii-masker/test/masking-pipeline.spec.ts` | DONE |
+| US-7.4 | Fail-closed egress guard | 7 | FR-7.1 | P0 | 5 | M7 | 7.3 | `packages/pii-masker/test/egress-guard.spec.ts` | DONE |
+| US-7.5 | Deterministic pseudonymisation | 7 | FR-7.2 | P1 | 5 | M7 | 7.3 | `packages/pii-masker/test/pseudonymiser.spec.ts` | DONE |
 | US-8.5 | Application shell UI | 8 | §3 | P0 | 13 | M8 | 8.3, 1.15 | `tests/e2e/app-shell.spec.ts` | TESTS_RED |
 | US-8.6 | Headless CLI runner | 8 | §4.3 | P1 | 5 | M8 | 8.3 | `tests/functional/cli/commands.spec.ts` | TESTS_RED |
 | US-8.7 | Performance budget harness | 8 | NFR-2 | P0 | 5 | M8 | 1.15, 3.5 | `tests/functional/perf/budgets.bench.ts` | TESTS_RED |
@@ -1979,7 +1979,7 @@ Status legend: `TODO` · `TESTS_RED` (acceptance tests written and failing) · `
 | R2 | CAMS CAS PDF layout varies by generation date and RTA | Import failures | Multiple layout adapters selected by fingerprint; unrecognised layout falls back to the CSV template path rather than guessing. |
 | R3 | Indian tax rules change mid-build | Rework across the tax engine | ADR-005 rule tables; engine code carries no rates. New FY = new JSON file. |
 | R4 | Rule 115 vs trade-date ambiguity (ADR-003) is challenged by a CA | Tax output disputed | Both values stored and shown with provenance; the computation trace (US-5.12) names the rule applied for every figure. |
-| R5 | NER name masking has false negatives on Indian names | PII leak to LLM | ADR-007 fail-closed guard is the backstop; guard rescans post-mask and aborts. Regex layer catches structured PII independently of NER. |
+| R5 | **Name detection misses a name** | PII leak to LLM | **The original mitigation was wrong and has been replaced.** It claimed the fail-closed guard was the backstop; the guard cannot be, because a PAN has a shape and a name does not. Actual mitigation, in order: (1) the detector **over-masks by default** — anything proper-noun-shaped is masked unless positively identified as an organisation, ticker or common term; (2) structured payloads are masked by **field semantics**, never by detection; (3) the guard re-runs detection, which catches a broken pipeline though not a detector blind spot. Residual risk is stated in `verifier.ts` and pinned by tests. |
 | R6 | Performance budget missed on 1,000+ lots with per-day FX lookups | NFR-2 breach | Rate cache keyed by (currency, date); valuation batches lookups. Benchmark in CI from M2 so regressions surface immediately. |
 | R7 | Grandfathering FMV data unavailable (OQ-4) | LTCG overstated for pre-2018 holdings | Manual per-lot entry; engine flags affected lots as `grandfatheringDataMissing` rather than assuming cost. |
 | R8 | Non-root container + bind-mounted SQLite hits UID/permission problems, differently on Linux vs macOS vs WSL2 | Stack unusable on some hosts; discovered late | Walking-skeleton container at M1 (see M9 sequencing note), configurable `PORTTRACK_UID/GID` (US-9.5), entrypoint pre-flight that fails fast with the exact `chown` remediation. |
@@ -2228,6 +2228,36 @@ passwords fail with `PDF_DECRYPTION_FAILED` and the attempted password never app
 | 2 | **The Form 16 mismatch fixture did not mismatch.** With no Part B present, Part B's total fell back to Part A's, so the two agreed and the reconciliation test passed for the wrong reason. | Fixture rewritten as a combined document where Part A totals ₹1,850,000 against Part B's ₹1,840,000, exactly as FR-5.1 describes. |
 | 3 | Import timestamps from the wall clock would have made re-imports non-identical, breaking both duplicate detection and the determinism test. | Provenance timestamps are derived from the source file, so the same file always parses to the same records. |
 | 4 | RC4 needed byte reads that `noUncheckedIndexedAccess` types as possibly-undefined; the obvious fix was non-null assertions, which DoD D4 forbids. | A total `byteAt` accessor, with a comment explaining that every index is masked to 0-255 so the fallback is unreachable. |
+
+### M7 result (2026-08-03) — COMPLETE
+
+```
+pnpm test        540 tests · 473 passing · 67 failing · 0 skipped
+pnpm typecheck   clean
+pnpm lint        clean
+```
+
+`pii-masker` is green at 37/37. **Nine of eleven packages are green.** EPIC-7 is complete, and the
+PRD's flagship masking scenario (FR-7 AC) now produces its mandated output exactly.
+
+**The planned NER does not work, and was measured before being adopted.** wink-nlp's entity
+recogniser returned **zero** person entities against this use case — not for "Rajesh Sharma", not for
+"Priya Menon", not for any name tried. Its part-of-speech tagger, however, reliably marks both tokens
+`PROPN`. Name detection is therefore built on POS runs, filtered by an organisation lexicon and a
+ticker heuristic. Had this been adopted on the plan's say-so, every name would have reached the LLM.
+
+**ADR-007's limits are now stated rather than implied.** Five tests pin exactly what the fail-closed
+guard does and does not protect, including one asserting that it CANNOT catch an unrecognised
+lowercase name. A green suite must not be readable as an assurance the system does not provide.
+
+**Corrections forced by implementation:**
+
+| # | Finding | Resolution |
+|---|---|---|
+| 1 | **Risk R5's mitigation was invalid.** It named the fail-closed guard as the backstop for name-detection misses. The guard matches shapes; a name has none, so it can never catch one. | R5 rewritten. Real mitigation is the over-masking bias, field-semantic masking for structured payloads, and re-running detection to catch pipeline bugs. The residual gap is documented in source and pinned by a test. |
+| 2 | **The verifier flagged its own output.** Redaction tokens are proper-noun shaped, so re-running detection over a correctly masked payload found `[REDACTED_NAME]` and refused it — failing closed on nothing at all. | Redaction tokens are stripped before scanning. |
+| 3 | **US-7.5 fed `RegexRules.detect` to the pseudonymiser**, which cannot return names by construction, so nothing was tokenised and the tests passed no entities. | Tests use the combined `EntityDetector`, and reset the session map so token numbering is deterministic. |
+| 4 | Masking order matters: running regex first leaves `[REDACTED_PAN]` fragments that tag as proper nouns and get masked twice. | Names are masked first, on natural text, then structured rules. |
 
 ### Test inventory
 

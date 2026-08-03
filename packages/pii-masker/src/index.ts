@@ -2,9 +2,12 @@
  * pii-masker — zero-trust anonymisation. Runs in the BROWSER bundle (ADR-013).
  * The API imports only {@link PiiVerifier}, never {@link MaskingPipeline}.
  */
-import { notImplemented, type Result } from '@porttrack/shared-kernel';
+import type { Result } from '@porttrack/shared-kernel';
 import { detect, mask } from './regex-rules.js';
-import { maskPayload, maskText } from './pipeline.js';
+import { detectEntities, maskPayload, maskText } from './pipeline.js';
+import { maskPersonNames } from './ner.js';
+import { sessionPseudonymiser } from './pseudonymiser.js';
+import { assertClean, scan } from './verifier.js';
 
 export * from './types.js';
 import type { DetectedEntity, MaskResult, PiiKind } from './types.js';
@@ -24,6 +27,7 @@ export interface PseudonymiserOps {
   tokenise(text: string, entities: readonly DetectedEntity[]): MaskResult;
   reversalMap(): ReadonlyMap<string, string>;
   rehydrate(text: string): string;
+  reset(): void;
 }
 
 export interface MaskingPipelineOps {
@@ -39,16 +43,13 @@ export interface PiiVerifierOps {
 }
 
 export const RegexRules: RegexRulesOps = { mask, detect };
-export const NerMasker: NerMaskerOps = {
-  maskPersonNames: () => notImplemented('US-7.2', 'NerMasker.maskPersonNames'),
-};
+export const EntityDetector = { detectEntities };
+export const NerMasker: NerMaskerOps = { maskPersonNames };
 export const Pseudonymiser: PseudonymiserOps = {
-  tokenise: () => notImplemented('US-7.5', 'Pseudonymiser.tokenise'),
-  reversalMap: () => notImplemented('US-7.5', 'Pseudonymiser.reversalMap'),
-  rehydrate: () => notImplemented('US-7.5', 'Pseudonymiser.rehydrate'),
+  tokenise: (text, entities) => sessionPseudonymiser.tokenise(text, entities),
+  reversalMap: () => sessionPseudonymiser.reversalMap(),
+  rehydrate: (text) => sessionPseudonymiser.rehydrate(text),
+  reset: () => { sessionPseudonymiser.reset(); },
 };
 export const MaskingPipeline: MaskingPipelineOps = { maskText, maskPayload };
-export const PiiVerifier: PiiVerifierOps = {
-  assertClean: () => notImplemented('US-7.4', 'PiiVerifier.assertClean'),
-  scan: () => notImplemented('US-7.4', 'PiiVerifier.scan'),
-};
+export const PiiVerifier: PiiVerifierOps = { assertClean, scan };

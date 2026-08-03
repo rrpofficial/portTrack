@@ -7,6 +7,7 @@
  * Keys are preserved; only string values are masked.
  */
 import { detect, mask } from './regex-rules.js';
+import { detectPersonNames, maskPersonNames } from './ner.js';
 import { REDACTION_TOKEN, type DetectedEntity, type PiiKind } from './types.js';
 
 /**
@@ -30,8 +31,13 @@ function kindForField(key: string): PiiKind | undefined {
   return undefined;
 }
 
+/**
+ * Names are masked BEFORE the structured rules. Part-of-speech tagging needs
+ * natural text: running regex first leaves `[REDACTED_PAN]` fragments that tag as
+ * proper nouns and get masked a second time.
+ */
 export function maskText(text: string): string {
-  return mask(text).masked;
+  return mask(maskPersonNames(text).masked).masked;
 }
 
 export function maskPayload<T>(payload: T, seen = new WeakSet<object>()): T {
@@ -55,6 +61,7 @@ export function maskPayload<T>(payload: T, seen = new WeakSet<object>()): T {
   return out as T;
 }
 
+/** Every entity in free text: structured identifiers and person names. */
 export function detectEntities(text: string): readonly DetectedEntity[] {
-  return detect(text);
+  return [...detect(text), ...detectPersonNames(text)].sort((a, b) => a.start - b.start);
 }
