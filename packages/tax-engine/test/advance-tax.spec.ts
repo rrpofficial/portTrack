@@ -74,23 +74,34 @@ describe('US-5.10 advance tax engine', () => {
 
     it('nets TDS and prior payments into the payable figure', () => {
       const inst = expectOk(q3());
-      expect(Number(inst.netPayable.amount)).toBe(
-        Math.max(
-          0,
-          Number(inst.cumulativeRequired.amount) -
-            Number(inst.tdsCredit.amount) -
-            Number(inst.alreadyPaid.amount),
-        ),
+      // Netting happens first, then the statutory §288B rounding to the nearest
+      // ₹10 that the scenario below pins. Asserting the raw difference here would
+      // contradict that requirement.
+      const netted = Math.max(
+        0,
+        Number(inst.cumulativeRequired.amount) -
+          Number(inst.tdsCredit.amount) -
+          Number(inst.alreadyPaid.amount),
       );
+      expect(Number(inst.netPayable.amount)).toBe(Math.round(netted / 10) * 10);
     });
   });
 
   describe('Scenario: Cumulative installments net off prior payments', () => {
-    it('reduces a ₹900,000 cumulative requirement to ₹600,000 after ₹300,000 paid', () => {
+    it('reduces the cumulative requirement by everything already paid', () => {
       const inst = expectOk(
         q3({ alreadyPaid: inr('300000'), income: { ...INCOME, tdsRemitted: inr('0') } }),
       );
-      expect(Number(inst.cumulativeRequired.amount) - 300000).toBe(Number(inst.netPayable.amount));
+      const expected = Math.round((Number(inst.cumulativeRequired.amount) - 300000) / 10) * 10;
+      expect(Number(inst.netPayable.amount)).toBe(expected);
+    });
+
+    it('demands nothing when prior payments already cover the requirement', () => {
+      const inst = expectOk(
+        q3({ alreadyPaid: inr('99999999'), income: { ...INCOME, tdsRemitted: inr('0') } }),
+      );
+      // An over-payment is a refund at assessment, never a negative instalment.
+      expect(Number(inst.netPayable.amount)).toBe(0);
     });
   });
 

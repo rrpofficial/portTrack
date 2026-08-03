@@ -114,6 +114,9 @@ export function value(input: ValuationInput): PortfolioValuation {
       navSource = quote?.source;
     }
 
+    // Retained for price-vs-currency attribution downstream (US-3.7).
+    const fxRate = asset.currency === INR ? undefined : input.fx?.rateFor(asset.currency, asOfDate);
+
     positions.push({
       assetId: asset.assetId,
       assetClass: asset.assetClass,
@@ -121,6 +124,8 @@ export function value(input: ValuationInput): PortfolioValuation {
       quantity,
       marketValue: toInr(native, asOfDate, input.fx),
       costBasis: toInr(costBasis, asOfDate, input.fx),
+      ...(asset.currency === INR ? {} : { nativeValue: native }),
+      ...(fxRate === undefined ? {} : { fxRate }),
       ...(navSource === undefined ? {} : { navSource }),
       ...(LIQUIDITY[asset.assetClass] === undefined
         ? {}

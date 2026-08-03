@@ -5,6 +5,11 @@ import path from 'node:path';
 const root = path.dirname(fileURLToPath(import.meta.url));
 const pkg = (name: string) => path.resolve(root, `packages/${name}/src/index.ts`);
 
+/**
+ * The walking skeleton (`pnpm demo`). Standalone rather than `mergeConfig(base, …)`:
+ * vitest merges array options by concatenation, so extending the base config would
+ * run the entire suite alongside it — the same trap the container config hit.
+ */
 export default defineConfig({
   resolve: {
     alias: {
@@ -26,13 +31,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['packages/**/test/**/*.spec.ts', 'tests/**/*.spec.ts'],
-    exclude: ['**/node_modules/**', 'tests/e2e/**', 'tests/container/**', 'tests/manual/**'],
-    setupFiles: ['tests/test-kit/setup.ts'],
-    coverage: {
-      provider: 'v8',
-      include: ['packages/*/src/**'],
-      thresholds: { lines: 90, branches: 85, functions: 90, statements: 90 },
-    },
+    include: ['tests/manual/**/*.spec.ts'],
+    exclude: ['**/node_modules/**'],
   },
 });

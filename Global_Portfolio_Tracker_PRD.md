@@ -214,12 +214,17 @@ Scenario: Generating Schedule FA Output for US Stocks
 Before any internal portfolio data payload, trade summary, or document text is passed to any AI/LLM service for natural language insight or portfolio audit, the system **MUST** pass the text through a client-side masking pipeline.
 
 #### FR-7.2: Target PII Token Masking Map
-- **PAN Card:** Regex `[A-Z]{5}[0-9]{4}[A-Z]{1}` $ightarrow$ `[REDACTED_PAN]`
-- **Aadhaar Number:** Regex `[2-9]{1}[0-9]{3}\s?[0-9]{4}\s?[0-9]{4}` $ightarrow$ `[REDACTED_AADHAAR]`
+- **PAN Card:** Regex `[A-Z]{5}[0-9]{4}[A-Z]{1}` $
+ightarrow$ `[REDACTED_PAN]`
+- **Aadhaar Number:** Regex `[2-9]{1}[0-9]{3}\s?[0-9]{4}\s?[0-9]{4}` $
+ightarrow$ `[REDACTED_AADHAAR]`
 - **DP ID / Client ID / Folio:** `[REDACTED_DEMAT_ACCOUNT]`
-- **Full Names / Individual Names:** Named Entity Recognition (NER) $ightarrow$ `[REDACTED_NAME]`
-- **Email / Phone / Address:** Regex $ightarrow$ `[REDACTED_CONTACT]`
-- **Transaction IDs / Order IDs:** Regex $ightarrow$ `[REDACTED_TXN_ID]`
+- **Full Names / Individual Names:** Named Entity Recognition (NER) $
+ightarrow$ `[REDACTED_NAME]`
+- **Email / Phone / Address:** Regex $
+ightarrow$ `[REDACTED_CONTACT]`
+- **Transaction IDs / Order IDs:** Regex $
+ightarrow$ `[REDACTED_TXN_ID]`
 
 #### Acceptance Criteria (FR-7)
 ```gherkin
@@ -309,6 +314,74 @@ Scenario: No secrets are baked into images
 
 ---
 
+### Module 9: Visual Design System
+
+#### FR-9.1: Reference-Derived Theme
+The interface shall follow the supplied reference design. Colour values are taken from that
+reference by sampling, not approximation:
+
+| Role | Value | Use |
+|---|---|---|
+| Canvas | `#8891A9` | The field the app shell floats on |
+| Shell | `#E8EAEC` | Shell interior — warm light grey, not white |
+| Surface | `#FFFFFF` | Cards |
+| Sunken | `#D5D9DD` | Chips, inset panels, progress troughs |
+| Ink | `#0E1124` | Primary text — navy-tinted, never pure black |
+| Muted ink | `#7A8090` | Secondary text |
+| Brand accent | `#E4482F` | Brand marks and primary CTAs only |
+| Info | `#7796BB` | Informational badges |
+
+- **Geometry:** shell radius 28px, card radius 20px, control radius 12px, chips fully rounded.
+- **Elevation:** diffuse low-contrast shadows only; no hard drop shadows.
+- **Typography:** Inter (SIL OFL), bundled with the application. Monetary and quantity columns
+  render with tabular figures so digits align vertically.
+
+#### FR-9.2: Semantic Colour Beyond the Reference
+The reference is a freelancing dashboard; this product is a tax and portfolio tool, where colour
+carries meaning it does not carry there. Two additions are therefore mandated:
+
+- **Gain / loss must never reuse the brand accent.** The brand accent is vermilion, and vermilion
+  already means "loss" in a portfolio context. Gains use `#0E7C5A`, losses `#B3261E`, and an exactly
+  zero change renders in muted ink so it cannot be misread as either.
+- **Compliance status must not collide with gain/loss.** Filed, due, overdue and provisional states
+  use amber `#B7791F`, which signals "action needed" without implying a financial loss.
+
+#### FR-9.3: Font Delivery Under Zero-Egress
+Fonts shall be **self-hosted from within the application bundle**. Loading a webfont from an external
+CDN is prohibited: it would either be blocked by the default-deny egress policy (§4.3) or would
+require punching a hole in it, and it would leak the fact and timing of application use to a third
+party.
+
+#### Acceptance Criteria (FR-9)
+```gherkin
+Scenario: The theme is driven by tokens, not scattered literals
+  When the stylesheet is inspected
+  Then every colour, radius, spacing and type value resolves from a design token
+  And no component declares a raw hex colour of its own
+
+Scenario: Brand accent is never used to convey financial direction
+  Given a portfolio position showing a loss
+  When the position is rendered
+  Then the loss uses the semantic loss colour, not the brand accent
+  And a primary call-to-action on the same screen uses the brand accent
+
+Scenario: A zero change is visually distinct from both a gain and a loss
+  Given a position whose value has not changed
+  Then its delta renders in muted ink, in neither the gain nor the loss colour
+
+Scenario: No font is fetched from an external origin
+  Given the application is loaded with the default egress policy
+  When network activity is inspected
+  Then no request is made to any font CDN
+  And all font faces resolve from bundled assets
+
+Scenario: Monetary columns align on the decimal
+  Given a table of monetary values of differing magnitudes
+  Then digits render with tabular figures so place values align vertically
+```
+
+---
+
 ## 4. Non-Functional Requirements (NFRs)
 
 1. **Security & Encryption:**
@@ -330,7 +403,12 @@ Scenario: No secrets are baked into images
      in the browser**, and is not relocated to the backend container.
    - The encrypted database resides on the host OS's native disk volume via bind mount, fully under the
      user's control and independent of the container lifecycle.
-4. **Deployment & Portability:**
+4. **Accessibility & Presentation:**
+   - Body text meets WCAG AA contrast (≥4.5:1) against its surface; large text ≥3:1.
+   - Financial direction is never conveyed by colour alone — a sign or arrow accompanies it, so the
+     roughly 1 in 12 men with a red-green deficiency can still read a portfolio.
+   - `prefers-reduced-motion` is honoured.
+5. **Deployment & Portability:**
    - Full stack (frontend + backend) starts with a single `docker compose up` on a host with no
      application toolchain installed.
    - Data survives `docker compose down`, image rebuilds and Docker Engine upgrades.
