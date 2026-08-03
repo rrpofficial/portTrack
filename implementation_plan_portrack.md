@@ -31,6 +31,9 @@ reversible only at material cost after Milestone M2.
 | **ADR-014** | **The vault passphrase never reaches the API container's disk.** It is supplied per-session, held in memory only, and the derived key is zeroised on lock/shutdown. | FR-8.3 "no secrets in images"; also prevents a bind-mounted `.env` from becoming the weakest link. | Low |
 | **ADR-015** | **Vault encryption is page-level whole-file AES-256-CBC + HMAC-SHA512** (the `sqlcipher` scheme in `better-sqlite3-multiple-ciphers`), **not AES-256-GCM.** NFR-1 amended accordingly. | **AES-256-GCM is not offered by any whole-file SQLite encryption provider** — the available schemes are `aes128cbc`, `aes256cbc`, `chacha20`, `sqlcipher`, `rc4`, `ascon128`, `aegis` (empirically enumerated, see below). Application-layer value encryption *can* use GCM but would forfeit range queries and indexing on the date and amount columns the ledger and snapshot engines depend on, for no material gain over one authenticated layer. `aes256cbc` alone was ruled out: it is unauthenticated and silently returns data from a tampered file. | Medium |
 
+| **ADR-016** | **Mutual funds stay ONE asset class carrying a derived `taxCharacter`**, rather than splitting into DEBT / ARBITRAGE / HYBRID sibling classes. | Asset class drives jurisdiction, Schedule AL mapping and allocation reporting — identical across every fund type; only tax differs. Sibling classes would also only *look* correct: the real discriminator is equity allocation, so a hybrid scheme still could not be placed without it. Decisive case: an **arbitrage fund returns cash-like yields but is taxed as equity-oriented**; listing `ARBITRAGE` beside `DEBT` invites precisely the wrong inference, whereas an explicit `taxCharacter` surfaces the surprise. | Medium |
+| **ADR-017** | **Brand accent is never used to convey financial direction** (PRD FR-9.2). Vermilion `#E4482F` is reserved for brand marks and primary CTAs; gains/losses use their own pair; a zero change renders in muted ink. | The reference design's accent is vermilion, and vermilion already means "loss" in a portfolio. Reusing it would make a branded button read as a negative number, and would leave a losing position indistinguishable from chrome. | Low |
+
 #### ADR-015 evidence
 
 Measured on `better-sqlite3-multiple-ciphers@12.11.1` (SQLite 3.53.2) on 2026-08-02, by writing a table
@@ -1505,6 +1508,19 @@ Scenario: Core navigation exists
 Scenario: The dashboard shows net worth with an asset-class breakdown
   Given an unlocked vault with holdings
   Then net worth in INR, asset-class allocation and a snapshot-comparison entry point are visible
+
+Scenario: The interface matches the reference theme (FR-9.1)
+  Then all colour, radius, spacing and type values resolve from apps/web/src/theme/tokens.css
+  And no component declares a raw hex colour
+
+Scenario: Financial direction never reuses the brand accent (FR-9.2)
+  Given a losing position and a primary call-to-action on the same screen
+  Then the loss renders in the semantic loss colour and the CTA in the brand accent
+  And a zero change renders in muted ink
+
+Scenario: Fonts are bundled, never fetched (FR-9.3)
+  Then Inter resolves from a bundled woff2 asset
+  And no request is made to any external font origin
 ```
 **Points:** 13 · **Deps:** US-8.3, US-1.15
 
@@ -1595,8 +1611,21 @@ Scenario: Health endpoint reports readiness distinctly from liveness
 Scenario: Vault passphrase is never logged or persisted (ADR-014)
   Given a vault unlock request
   Then the passphrase appears in no log line, no error payload and no file on disk
+
+Scenario: The compliance scheduler never silently skips a statutory snapshot
+  Given the application was last run on 2025-11-01
+  And the current date is 2026-06-01
+  When the scheduler runs
+  Then it is invoked with the persisted last-run instant, not the default 24-hour window
+  And the missed "DOM_31MAR2026" snapshot is created
+  And the last-run instant is persisted only after the snapshots are committed
 ```
-**Points:** 8 · **Deps:** US-8.3, US-8.9
+> **Load-bearing.** `CompliancePolicy.dueSnapshots` defaults to a 24-hour window, so a user who does
+> not open the app for a few months would otherwise never get their 31-Mar snapshot — a silent
+> compliance failure with no error to notice. Persisting and passing `since` is what closes that,
+> and it has no owner until this story.
+
+**Points:** 8 · **Deps:** US-8.3, US-8.9, US-3.2
 
 ---
 
@@ -1871,17 +1900,17 @@ Status legend: `TODO` · `TESTS_RED` (acceptance tests written and failing) · `
 | US-3.6 | Snapshot ↔ live comparison | 3 | FR-3.1 | P0 | 3 | M4 | 3.5 | `tests/functional/snapshot/live-vs-historical.spec.ts` | WIP |
 | US-3.7 | Allocation shift & movement buckets | 3 | FR-3.1 | P0 | 5 | M4 | 3.5 | `packages/snapshot/test/comparison-engine.spec.ts` | DONE |
 | US-3.8 | XIRR / CAGR / absolute return | 3 | FR-3.1 | P0 | 5 | M4 | 3.5 | `packages/snapshot/test/comparison-engine.spec.ts` | DONE |
-| US-5.2 | Versioned tax rule table | 5 | FR-5.1 | P0 | 5 | M5 | 5.1 | `packages/tax-engine/test/rule-table.spec.ts` | TESTS_RED |
+| US-5.2 | Versioned tax rule table | 5 | FR-5.1 | P0 | 5 | M5 | 5.1 | `packages/tax-engine/test/rule-table.spec.ts` | DONE |
 | US-5.3 | Form 16 parser & manual income | 5 | FR-5.1 | P0 | 8 | M5 | 5.2, 7.1 | `packages/tax-engine/test/form16-parser.spec.ts` | TESTS_RED |
-| US-5.4 | Old vs New regime slabs | 5 | FR-5.1 | P0 | 8 | M5 | 5.3 | `packages/tax-engine/test/regime-comparison.spec.ts` | TESTS_RED |
-| US-5.5 | Surcharge, marginal relief, cess | 5 | FR-5.1 | P0 | 8 | M5 | 5.4 | `packages/tax-engine/test/surcharge-relief.spec.ts` | TESTS_RED |
-| US-5.6 | HNI classification | 5 | FR-5.1 | P0 | 3 | M5 | 5.5, 1.15 | `packages/tax-engine/test/hni-classification.spec.ts` | TESTS_RED |
-| US-5.7 | Capital gains classifier | 5 | FR-5.2 | P0 | 5 | M5 | 5.2, 1.3 | `packages/tax-engine/test/cg-classifier.spec.ts` | TESTS_RED |
-| US-5.8 | CG computation, exemption, grandfathering | 5 | FR-5.2 | P0 | 13 | M5 | 5.7, 2.5 | `packages/tax-engine/test/capital-gains.spec.ts` | TESTS_RED |
-| US-5.9 | Other-sources income aggregation | 5 | FR-5.3 | P0 | 3 | M5 | 1.11, 1.9, 1.5 | `packages/tax-engine/test/other-sources.spec.ts` | TESTS_RED |
-| US-5.10 | Quarterly advance tax engine | 5 | FR-5.3 | P0 | 13 | M5 | 5.8, 5.9, 5.5 | `packages/tax-engine/test/advance-tax.spec.ts`, `tests/functional/tax/advance-tax-q3.spec.ts` | TESTS_RED |
-| US-5.11 | Foreign tax credit / DTAA | 5 | FR-5.1 | P1 | 8 | M5 | 5.10, 1.5 | `packages/tax-engine/test/foreign-tax-credit.spec.ts` | TESTS_RED |
-| US-5.12 | Tax computation trace | 5 | FR-5.1 | P1 | 5 | M5 | 5.10 | `packages/tax-engine/test/computation-trace.spec.ts` | TESTS_RED |
+| US-5.4 | Old vs New regime slabs | 5 | FR-5.1 | P0 | 8 | M5 | 5.3 | `packages/tax-engine/test/regime-comparison.spec.ts` | DONE |
+| US-5.5 | Surcharge, marginal relief, cess | 5 | FR-5.1 | P0 | 8 | M5 | 5.4 | `packages/tax-engine/test/surcharge-relief.spec.ts` | DONE |
+| US-5.6 | HNI classification | 5 | FR-5.1 | P0 | 3 | M5 | 5.5, 1.15 | `packages/tax-engine/test/hni-classification.spec.ts` | DONE |
+| US-5.7 | Capital gains classifier | 5 | FR-5.2 | P0 | 5 | M5 | 5.2, 1.3 | `packages/tax-engine/test/cg-classifier.spec.ts` | DONE |
+| US-5.8 | CG computation, exemption, grandfathering | 5 | FR-5.2 | P0 | 13 | M5 | 5.7, 2.5 | `packages/tax-engine/test/capital-gains.spec.ts` | DONE |
+| US-5.9 | Other-sources income aggregation | 5 | FR-5.3 | P0 | 3 | M5 | 1.11, 1.9, 1.5 | `packages/tax-engine/test/other-sources.spec.ts` | DONE |
+| US-5.10 | Quarterly advance tax engine | 5 | FR-5.3 | P0 | 13 | M5 | 5.8, 5.9, 5.5 | `packages/tax-engine/test/advance-tax.spec.ts`, `tests/functional/tax/advance-tax-q3.spec.ts` | DONE |
+| US-5.11 | Foreign tax credit / DTAA | 5 | FR-5.1 | P1 | 8 | M5 | 5.10, 1.5 | `packages/tax-engine/test/foreign-tax-credit.spec.ts` | DONE |
+| US-5.12 | Tax computation trace | 5 | FR-5.1 | P1 | 5 | M5 | 5.10 | `packages/tax-engine/test/computation-trace.spec.ts` | DONE |
 | US-4.1 | Ingestion pipeline framework | 4 | FR-4.1 | P0 | 8 | M6 | 8.3 | `packages/ingestion/test/pipeline.spec.ts` | TESTS_RED |
 | US-4.2 | CAMS / KFintech CAS PDF parser | 4 | FR-4.1 | P0 | 13 | M6 | 4.1, 7.1 | `packages/ingestion/test/cams-cas-parser.spec.ts` | TESTS_RED |
 | US-4.3 | Zerodha XLSX + CSV parser | 4 | FR-4.1 | P0 | 8 | M6 | 4.1, 1.3 | `packages/ingestion/test/zerodha-parser.spec.ts` | TESTS_RED |
@@ -2073,12 +2102,12 @@ currencies and expected columns are both asserted, and a partial sheet commits n
 ### M4 result (2026-08-02) — COMPLETE
 
 ```
-pnpm test        484 tests · 307 passing · 177 failing · 0 skipped
+pnpm test        492 tests · 315 passing · 177 failing · 0 skipped
 pnpm typecheck   clean
 pnpm lint        clean
 ```
 
-`snapshot` is fully green at 49/49. Six of eleven packages are now green:
+`snapshot` is fully green at 57/57. Six of eleven packages are now green:
 `shared-kernel`, `core-domain`, `fx-itbr`, `snapshot`, `persistence`, `platform`.
 
 **Status split.** US-3.1, US-3.5, US-3.7 and US-3.8 are `DONE`. US-3.2, US-3.3, US-3.4 and US-3.6 are
@@ -2100,6 +2129,71 @@ leaves every one of them byte-identical (ADR-006).
 | 4 | **Price and currency movement were indistinguishable.** `SnapshotPosition` carried only an INR value, so a foreign holding's variance could not be attributed. | Added optional `nativeValue` and `fxRate`. A holding that rises $10k→$12k while the rupee moves ₹80→₹85 now reports ₹160,000 of price effect and ₹60,000 of currency effect, summing exactly to the ₹220,000 INR delta. |
 | 5 | US-3.4 and US-3.6 had no unit coverage at all — their only tests were functional ones blocked on M8. | Added `custom-snapshot.spec.ts` covering the date guard, scope filtering and snapshot-vs-live comparison at the domain level. |
 | 6 | Three tracker rows named test files that were never created. | Paths corrected to the files that actually hold those stories' tests. |
+
+### M4 post-review corrections (2026-08-02)
+
+Reviewing the M4 summary surfaced two defects that the green suite had not caught:
+
+| # | Finding | Resolution |
+|---|---|---|
+| 1 | **Price/currency attribution was dead in production.** `nativeValue` and `fxRate` existed only on `SnapshotPosition`; `ValuationEngine` never emitted them. Every real snapshot therefore had nothing to attribute, and the feature reported `undefined` always. The test passed only because it hand-built positions — a green test over a dead feature. | Both fields added to `ValuedPosition` and populated by the valuation engine for every non-INR holding. New `attribution-end-to-end.spec.ts` drives the real chain (ValuationEngine → SnapshotFactory → DeltaEngine) so the wiring cannot rot silently again. |
+| 2 | **`assertImmutable` returned `Ok` exactly when the freeze FAILED.** A caller writing `if (result.ok)` would have proceeded precisely when the snapshot had been corrupted — the most dangerous possible reading of a result type. | Renamed to `attemptMutation`, where `Err(SNAPSHOT_IMMUTABLE)` is plainly the correct outcome, and added `isImmutable()` for positive checks, with a test proving it returns false for a non-frozen lookalike. |
+
+The shared lesson: a test that constructs its own inputs verifies the unit but says nothing about the
+wiring. Where a feature spans packages, at least one test must traverse the real path.
+
+### M5 progress (2026-08-03) — in flight
+
+**Item 0 complete: mutual fund tax character (ADR-016).** `core-domain` is green at 119/119.
+`DOMESTIC_MUTUAL_FUND` now carries a `schemeCategory` (what the user picks and a CAS import
+populates) and a derived `taxCharacter` (what the capital gains engine keys off). Without this,
+US-5.7 would have been written against `assetClass` alone and applied equity treatment to debt funds
+— a materially wrong tax number, silently.
+
+The 65% / 35% equity bands in `mf-tax-character.ts` are **structural, not statutory**: they describe
+the shape of the rule. The operative percentages, effective dates and the rates they map to moved in
+both the 2023 and 2024 Finance Acts and belong in the FY rule table (US-5.2), not in engine code.
+
+**Visual design system captured (PRD Module 9).** Requirement arrived mid-milestone; recorded rather
+than built, since `apps/web` does not exist until M8. Palette values were sampled from the supplied
+reference image, not estimated. Tokens live in `apps/web/src/theme/tokens.css` and are bound to US-8.5
+by acceptance criteria, so M8 cannot drift from them.
+
+**Still open — US-5.2 tax rate sourcing.** Slab, surcharge, cess and capital gains parameters for
+FY 2025-26 have not been supplied. Proceeding with a clearly-marked **provisional** rule set so the
+engine and its tests can be built; every provisional file carries a `"status": "PROVISIONAL"` field
+and the tax engine refuses to emit a filing artifact while any rule set in use is provisional.
+
+### M5 result (2026-08-03) — COMPLETE except US-5.3
+
+```
+pnpm test        522 tests · 410 passing · 112 failing · 0 skipped
+pnpm typecheck   clean
+pnpm lint        clean
+```
+
+`tax-engine` is green at 82/82. **Seven of eleven packages are now green**: `shared-kernel`,
+`core-domain`, `fx-itbr`, `snapshot`, `tax-engine`, `persistence`, `platform`.
+
+`DONE`: US-5.2, US-5.4 … US-5.12. **US-5.3 (Form 16 parser) remains `TESTS_RED` and has no test file
+at all** — the tracker named `form16-parser.spec.ts`, which was never written. It is the one M5 story
+with no executable acceptance criteria, and is carried forward.
+
+**Provisional rates, with a hard gate.** FY 2025-26 and 2024-25 rule sets carry
+`status: 'PROVISIONAL'`. Computation is permitted so the engine is testable and demonstrable;
+`TaxRuleTable.assertFilingReady` refuses any provisional set, so no filing artifact can be produced
+from unverified numbers. Six tests pin that gate, including one proving filing is allowed once a set
+is marked `VERIFIED`.
+
+**Corrections forced by implementation:**
+
+| # | Finding | Resolution |
+|---|---|---|
+| 1 | **Two surcharge tests contradicted each other.** One asserted an unrelieved surcharge at ₹51,00,000; the other required marginal relief. Relief genuinely applies there — the zone runs to roughly ₹51.96 lakh — so the first test was wrong. | Band tests moved to incomes clear of the relief zone (₹60L / ₹1.2Cr / ₹2.5Cr). Relief is now computed against the tax due at the threshold, derived from the top marginal rate when a caller does not supply it. |
+| 2 | **Two advance tax tests demanded exact arithmetic while a third demanded §288B ₹10 rounding.** Mutually unsatisfiable. | The statutory rounding wins; the arithmetic assertions now round. Added a test that an over-payment yields zero, never a negative instalment. |
+| 3 | **Holding-period boundary tests specified only one endpoint.** A 12-month boundary cannot be asserted without an acquisition date, and the two scenarios needed different ones. | `ExitTransaction` and `LotAllocation` now carry `acquisitionDate`; the tests state both endpoints. |
+| 4 | **The grandfathering test never supplied the FMV it asserted on** — it expected a ₹70 gain from a ₹180 FMV that appeared nowhere. | `LotAllocation.grandfatheredFmv` added and supplied by the test. |
+| 5 | **The rule table read JSON with `node:fs` from a pure domain package** — caught by our own layering lint rule, not by a human. | Rule sets converted to typed TS modules. No I/O, and a malformed slab band is now a compile error rather than a runtime one. |
 
 ### Test inventory
 

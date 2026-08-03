@@ -105,11 +105,29 @@ describe('US-3.1 snapshot immutability (ADR-006)', () => {
     it('rejects any mutation with SNAPSHOT_IMMUTABLE', () => {
       const snapshot = aSnapshot();
       expectErr(
-        SnapshotFactory.assertImmutable(snapshot, () => {
+        SnapshotFactory.attemptMutation(snapshot, () => {
           (snapshot.positions as unknown[]).push({});
         }),
         'SNAPSHOT_IMMUTABLE',
       );
+    });
+
+    it('reports the snapshot as deeply immutable', () => {
+      expect(SnapshotFactory.isImmutable(aSnapshot())).toBe(true);
+    });
+
+    it('reports a non-frozen lookalike as mutable, so the check has teeth', () => {
+      const mutable = { ...aSnapshot(), positions: [] } as unknown as Snapshot;
+      expect(SnapshotFactory.isImmutable(mutable)).toBe(false);
+    });
+
+    it('leaves the content hash unchanged after a refused mutation', () => {
+      const snapshot = aSnapshot();
+      const hash = snapshot.contentHash;
+      SnapshotFactory.attemptMutation(snapshot, () => {
+        (snapshot.positions as unknown[]).push({});
+      });
+      expect(snapshot.contentHash).toBe(hash);
     });
 
     it('produces a contentHash matching SHA-256 of the canonical JSON', () => {

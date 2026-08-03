@@ -19,7 +19,8 @@
     "typecheck": "tsc -b --pretty false",
     "lint": "eslint .",
     "docker:up": "docker compose up --build",
-    "docker:down": "docker compose down"
+    "docker:down": "docker compose down",
+    "demo": "vitest run --config vitest.demo.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

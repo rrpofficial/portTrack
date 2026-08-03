@@ -47,3 +47,40 @@ describe('US-5.2 versioned tax rule table (ADR-005)', () => {
     });
   });
 });
+
+describe('US-5.2 provisional rule sets (unverified rates)', () => {
+  describe('Scenario: A provisional rule set computes but cannot be filed', () => {
+    it('flags the bundled FY 2025-26 set as provisional', () => {
+      expect(TaxRuleTable.isProvisional(expectOk(TaxRuleTable.rulesFor('2025-26')))).toBe(true);
+    });
+
+    it('still permits computation, so the product can be built and demonstrated', () => {
+      expect(Number(expectOk(TaxRuleTable.rulesFor('2025-26')).cessPct)).toBe(4);
+    });
+
+    it('refuses to produce a filing artifact from unverified rates', () => {
+      expectErr(
+        TaxRuleTable.assertFilingReady(expectOk(TaxRuleTable.rulesFor('2025-26'))),
+        'TAX_RULES_UNAVAILABLE',
+      );
+    });
+
+    it('names the reason so the blocker is actionable', () => {
+      const result = TaxRuleTable.assertFilingReady(expectOk(TaxRuleTable.rulesFor('2025-26')));
+      if (!result.ok) {
+        expect(result.error.message).toMatch(/PROVISIONAL/);
+        expect(result.error.message).toMatch(/Finance Act/);
+      }
+    });
+
+    it('carries a note explaining what must be verified', () => {
+      const rules = expectOk(TaxRuleTable.rulesFor('2025-26'));
+      expect(rules.provisionalNote).toMatch(/NOT VERIFIED/);
+    });
+
+    it('allows filing once a rule set is marked verified', () => {
+      const verified = { ...expectOk(TaxRuleTable.rulesFor('2025-26')), status: 'VERIFIED' as const };
+      expectOk(TaxRuleTable.assertFilingReady(verified));
+    });
+  });
+});

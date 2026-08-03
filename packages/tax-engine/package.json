@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@porttrack/core-domain": "workspace:*",
+    "@porttrack/fx-itbr": "workspace:*",
     "@porttrack/shared-kernel": "workspace:*"
   },
   "devDependencies": {

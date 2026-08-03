@@ -37,6 +37,28 @@ export type AssetClass =
   | 'CHIT_FUND';
 
 export type Jurisdiction = 'DOMESTIC' | 'FOREIGN';
+
+/**
+ * SEBI-style scheme category. This is what a user recognises and what a CAS
+ * import can populate; it is presentational and drives no tax logic directly.
+ */
+export type MfSchemeCategory =
+  | 'EQUITY'
+  | 'DEBT'
+  | 'HYBRID'
+  | 'LIQUID'
+  | 'ARBITRAGE'
+  | 'SOLUTION_ORIENTED';
+
+/**
+ * How a mutual fund is TREATED for capital gains — derived, never chosen.
+ *
+ * Kept separate from the scheme category because the two genuinely diverge, and
+ * the divergence is the whole point: an arbitrage fund behaves like cash but is
+ * taxed as equity, because it holds enough equity to qualify. A user shown
+ * "Arbitrage" beside "Debt" would reasonably assume debt treatment and be wrong.
+ */
+export type MfTaxCharacter = 'EQUITY_ORIENTED' | 'DEBT_ORIENTED' | 'HYBRID_MID_BAND';
 export type Liquidity = 'LIQUID' | 'LOCKED_UNTIL_60' | 'LOCKED' | 'ILLIQUID';
 export type RateSource = 'SBI_ITBR' | 'RBI_REFERENCE' | 'ECB' | 'OANDA' | 'MANUAL';
 
@@ -74,12 +96,21 @@ export interface LotAllocation {
   readonly lotId: string;
   readonly quantity: Quantity;
   readonly costPerUnit: Money;
+  /** Carried from the lot so a gain can be classified without re-reading it. */
+  readonly acquisitionDate?: IsoDate;
+  /** 31-Jan-2018 fair market value, for grandfathering (OQ-4). */
+  readonly grandfatheredFmv?: Money;
 }
 
 export interface ExitTransaction {
   readonly txnId: string;
   readonly assetId: string;
   readonly exitDate: IsoDate;
+  /**
+   * Acquisition date of the holding sold. Present on every exit: a holding period
+   * needs both endpoints, and long-term vs short-term turns on it.
+   */
+  readonly acquisitionDate?: IsoDate;
   readonly quantity: Quantity;
   readonly pricePerUnit: Money;
   readonly fees: Money;
@@ -137,6 +168,17 @@ export interface Asset {
   readonly positionClosed?: boolean;
   /** Present only for HAND_LOAN assets. */
   readonly handLoan?: HandLoan;
+  /** Present only for DOMESTIC_MUTUAL_FUND assets. */
+  readonly schemeCategory?: MfSchemeCategory;
+  /** Equity allocation, required to place a HYBRID scheme. */
+  readonly equityAllocationPct?: Percentage;
+}
+
+/** What the capital gains engine needs to know about a holding. */
+export interface TaxSubject {
+  readonly assetClass: AssetClass;
+  readonly schemeCategory?: MfSchemeCategory;
+  readonly equityAllocationPct?: Percentage;
 }
 
 export interface Liability {
@@ -167,6 +209,14 @@ export interface ValuedPosition {
   readonly costBasis: Money;
   readonly navSource?: 'PUBLISHED' | 'LAST_PUBLISHED';
   readonly liquidity?: Liquidity;
+  /**
+   * Value in the holding's own currency and the rate used to reach INR. Set for
+   * every non-INR position so a later comparison can separate price movement from
+   * currency movement (US-3.7). Without these carried here, the snapshot layer has
+   * nothing to attribute and reports only a combined INR delta.
+   */
+  readonly nativeValue?: Money;
+  readonly fxRate?: Rate;
 }
 
 export interface PortfolioValuation {

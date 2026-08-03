@@ -81,10 +81,16 @@ describe('US-5.4 regime comparison', () => {
 
 describe('US-5.5 surcharge, marginal relief and cess', () => {
   describe('Scenario: Surcharge bands apply at the mandated thresholds (FR-5.1)', () => {
+    /**
+     * Incomes chosen to sit clear of the marginal-relief zone. The original
+     * ₹51,00,000 was wrong: relief genuinely applies just above a threshold
+     * (the zone runs to roughly ₹51.96 lakh), so asserting an unrelieved
+     * surcharge there contradicted the relief scenario below.
+     */
     it.each([
-      ['5100000', 10],
-      ['10100000', 15],
-      ['20100000', 25],
+      ['6000000', 10],
+      ['12000000', 15],
+      ['25000000', 25],
     ])('applies %s%% surcharge above the matching threshold', (totalIncome, expectedPct) => {
       const { surcharge, total } = SurchargeCalculator.apply({
         baseTax: inr('1000000'),
@@ -100,7 +106,7 @@ describe('US-5.5 surcharge, marginal relief and cess', () => {
       const { surcharge, cess } = SurchargeCalculator.apply({
         baseTax: inr('1000000'),
         capitalGainsTax: inr('0'),
-        totalIncome: inr('5100000'),
+        totalIncome: inr('6000000'),
         rules: RULES(),
       });
       expect(Number(cess.amount)).toBeCloseTo((1000000 + Number(surcharge.amount)) * 0.04, 2);
@@ -185,7 +191,7 @@ describe('US-5.5 surcharge, marginal relief and cess', () => {
       const { trace, total } = SurchargeCalculator.apply({
         baseTax: inr('1000000'),
         capitalGainsTax: inr('0'),
-        totalIncome: inr('5100000'),
+        totalIncome: inr('6000000'),
         rules: RULES(),
       });
       const sum = trace.reduce((t, l) => t + Number(l.amount.amount), 0);
@@ -196,7 +202,7 @@ describe('US-5.5 surcharge, marginal relief and cess', () => {
       const { trace } = SurchargeCalculator.apply({
         baseTax: inr('1000000'),
         capitalGainsTax: inr('0'),
-        totalIncome: inr('5100000'),
+        totalIncome: inr('6000000'),
         rules: RULES(),
       });
       expect(trace.every((l) => l.ruleRef.length > 0)).toBe(true);

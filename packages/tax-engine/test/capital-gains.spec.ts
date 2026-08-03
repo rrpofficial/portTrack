@@ -2,9 +2,14 @@
  * US-5.7 — Capital gains classifier (PRD FR-5.2)
  * US-5.8 — CG computation: exemption, grandfathering, indexation (PRD FR-5.2)
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { CapitalGainsEngine, TaxRuleTable } from '@porttrack/tax-engine';
-import { anExit, expectMoney, expectOk, inr, usd } from '@porttrack/test-kit';
+import { anExit, expectMoney, expectOk, inr, seedStandardRates, usd } from '@porttrack/test-kit';
+
+beforeEach(() => {
+  // Foreign gains convert through Rule 115 (ADR-003), so the rate history matters.
+  seedStandardRates();
+});
 
 const RULES = () => expectOk(TaxRuleTable.rulesFor('2025-26'));
 
@@ -12,7 +17,7 @@ describe('US-5.7 capital gains classifier', () => {
   describe('Scenario: Listed domestic equity holding period boundary (FR-5.2)', () => {
     it('classifies exactly 12 months as STCG', () => {
       const gain = CapitalGainsEngine.classify(
-        anExit({ exitDate: '2026-01-10', pricePerUnit: inr('200') }),
+        anExit({ acquisitionDate: '2025-01-10', exitDate: '2026-01-10', pricePerUnit: inr('200') }),
         'DOMESTIC_EQUITY',
         RULES(),
       );
@@ -22,7 +27,7 @@ describe('US-5.7 capital gains classifier', () => {
 
     it('classifies 12 months and 1 day as LTCG', () => {
       const gain = CapitalGainsEngine.classify(
-        anExit({ exitDate: '2026-01-11', pricePerUnit: inr('200') }),
+        anExit({ acquisitionDate: '2025-01-10', exitDate: '2026-01-11', pricePerUnit: inr('200') }),
         'DOMESTIC_EQUITY',
         RULES(),
       );
@@ -112,7 +117,14 @@ describe('US-5.8 capital gains computation', () => {
             exitDate: '2025-09-01',
             quantity: '1',
             pricePerUnit: inr('250'),
-            allocations: [{ lotId: 'L1', quantity: '1', costPerUnit: inr('100') }],
+            allocations: [
+              {
+                lotId: 'L1',
+                quantity: '1',
+                costPerUnit: inr('100'),
+                grandfatheredFmv: inr('180'),
+              },
+            ],
           }),
         ],
         { txn_gf: 'DOMESTIC_EQUITY' },
@@ -129,7 +141,14 @@ describe('US-5.8 capital gains computation', () => {
             exitDate: '2025-09-01',
             quantity: '1',
             pricePerUnit: inr('150'),
-            allocations: [{ lotId: 'L1', quantity: '1', costPerUnit: inr('100') }],
+            allocations: [
+              {
+                lotId: 'L1',
+                quantity: '1',
+                costPerUnit: inr('100'),
+                grandfatheredFmv: inr('180'),
+              },
+            ],
           }),
         ],
         { txn_gf: 'DOMESTIC_EQUITY' },
@@ -142,7 +161,14 @@ describe('US-5.8 capital gains computation', () => {
   describe('Scenario: STCG on listed domestic equity is taxed at 20%', () => {
     it('taxes ₹500,000 of STCG as ₹100,000 before surcharge and cess', () => {
       const result = CapitalGainsEngine.compute(
-        [anExit({ txnId: 'txn_stcg', exitDate: '2025-11-10', pricePerUnit: inr('500000') })],
+        [
+          anExit({
+            txnId: 'txn_stcg',
+            acquisitionDate: '2025-05-10',
+            exitDate: '2025-11-10',
+            pricePerUnit: inr('500000'),
+          }),
+        ],
         { txn_stcg: 'DOMESTIC_EQUITY' },
         RULES(),
       );

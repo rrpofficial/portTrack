@@ -35,6 +35,12 @@ export {
   isAssetClass,
 } from './taxonomy.js';
 export { days30360, yearFraction, monthsBetween, addCalendarDays } from './daycount.js';
+export {
+  DEFAULT_EQUITY_BANDS,
+  taxCharacterFor,
+  taxCharacterOf,
+  type EquityBands,
+} from './mf-tax-character.js';
 
 let assetCounter = 0;
 

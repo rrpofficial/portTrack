@@ -223,6 +223,9 @@ importers:
       '@porttrack/core-domain':
         specifier: workspace:*
         version: link:../core-domain
+      '@porttrack/fx-itbr':
+        specifier: workspace:*
+        version: link:../fx-itbr
       '@porttrack/shared-kernel':
         specifier: workspace:*
         version: link:../shared-kernel

@@ -4,10 +4,11 @@
  */
 import { canonicalJson, sha256 } from './canonical.js';
 import {
-  assertImmutable,
   assertNotFuture,
+  attemptMutation,
   build,
   hashOf,
+  isImmutable,
   positionsInScope,
   verify,
 } from './factory.js';
@@ -26,7 +27,9 @@ export const CompliancePolicy = { dueSnapshots, domesticSnapshotId, foreignSnaps
 export const SnapshotFactory = {
   build,
   verify,
-  assertImmutable,
+  /** Err(SNAPSHOT_IMMUTABLE) is the correct outcome — see factory.ts. */
+  attemptMutation,
+  isImmutable,
   assertNotFuture,
   positionsInScope,
 };

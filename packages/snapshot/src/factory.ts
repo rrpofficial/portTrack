@@ -93,28 +93,47 @@ export function verify(snapshot: Snapshot): Result<void> {
   return Ok(undefined);
 }
 
+/** True when every nested object in the snapshot is frozen. */
+export function isImmutable(snapshot: Snapshot): boolean {
+  const frozenDeeply = (value: unknown): boolean => {
+    if (value === null || typeof value !== 'object') return true;
+    if (!Object.isFrozen(value)) return false;
+    return Object.values(value).every(frozenDeeply);
+  };
+  return frozenDeeply(snapshot);
+}
+
 /**
- * Runs `mutation` and reports whether it was refused. A frozen object silently
- * ignores writes in sloppy mode and throws in strict mode; this normalises both
- * into an explicit failure so callers cannot proceed believing a change took.
+ * Attempts `mutation` against a snapshot and reports whether it was refused.
+ *
+ * `Err(SNAPSHOT_IMMUTABLE)` is the CORRECT outcome: the freeze held. `Ok` means the
+ * mutation actually landed, which is a defect in the freezing, not a success.
+ *
+ * Named `attemptMutation` rather than `assertImmutable` deliberately — under the
+ * old name a caller writing `if (result.ok)` would proceed exactly when the
+ * snapshot had been corrupted, which is the most dangerous possible reading of a
+ * result type.
+ *
+ * A frozen object silently ignores writes in sloppy mode and throws in strict mode;
+ * both are normalised here, so the outcome does not depend on the caller's mode.
  */
-export function assertImmutable(snapshot: Snapshot, mutation: () => void): Result<void> {
-  const before = hashOf({ ...snapshot, contentHash: undefined } as never);
+export function attemptMutation(snapshot: Snapshot, mutation: () => void): Result<void> {
+  const refused = new SnapshotImmutableError(
+    `snapshot ${snapshot.snapshotId} is frozen and cannot be modified`,
+  );
+
+  const fingerprint = (): string => {
+    const { contentHash: _ignored, ...rest } = snapshot;
+    return hashOf(rest);
+  };
+
+  const before = fingerprint();
   try {
     mutation();
   } catch {
-    return Err(
-      new SnapshotImmutableError(`snapshot ${snapshot.snapshotId} is frozen and cannot be modified`),
-    );
+    return Err(refused);
   }
-  const after = hashOf({ ...snapshot, contentHash: undefined } as never);
-  if (before === after) {
-    return Err(
-      new SnapshotImmutableError(`snapshot ${snapshot.snapshotId} is frozen and cannot be modified`),
-    );
-  }
-  // The mutation actually took effect — the freeze is not doing its job.
-  return Ok(undefined);
+  return fingerprint() === before ? Err(refused) : Ok(undefined);
 }
 
 /** Guards a custom snapshot request against a future date (US-3.4). */

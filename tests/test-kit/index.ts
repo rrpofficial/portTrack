@@ -138,6 +138,7 @@ export function anExit(overrides: Partial<ExitTransaction> = {}): ExitTransactio
   return {
     txnId: 'txn_0001',
     assetId: 'ast_foreign_equity_0001',
+    acquisitionDate: '2023-05-10',
     exitDate: '2026-02-15',
     quantity: '40',
     pricePerUnit: usd('180.00'),
