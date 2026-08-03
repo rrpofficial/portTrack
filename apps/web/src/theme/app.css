@@ -1,0 +1,188 @@
+/**
+ * Application styling. Every value resolves from tokens.css (PRD FR-9.1) —
+ * a guard test asserts that no raw hex colour appears in this directory.
+ */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: var(--pt-text-body);
+  color: var(--pt-ink);
+  background: var(--pt-canvas);
+  -webkit-font-smoothing: antialiased;
+}
+
+.pt-shell {
+  max-width: 1180px;
+  margin: var(--pt-space-5) auto;
+  padding: var(--pt-space-5);
+  background: var(--pt-shell);
+  border-radius: var(--pt-radius-shell);
+  min-height: calc(100vh - var(--pt-space-6));
+}
+
+.pt-shell--centred {
+  display: grid;
+  place-items: center;
+  max-width: 460px;
+}
+
+/* ------------------------------------------------------------------ topbar */
+
+.pt-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--pt-space-6);
+  padding: 0 var(--pt-space-2) var(--pt-space-5);
+}
+
+.pt-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--pt-space-2);
+  font: var(--pt-text-heading);
+  letter-spacing: var(--pt-tracking-tight);
+}
+
+.pt-brand__mark {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--pt-radius-chip);
+  background: var(--pt-accent);
+}
+
+.pt-topbar nav { display: flex; gap: var(--pt-space-5); }
+
+.pt-topbar a {
+  color: var(--pt-ink-muted);
+  text-decoration: none;
+  font: var(--pt-text-label);
+  padding-bottom: var(--pt-space-1);
+}
+
+.pt-topbar a.is-active {
+  color: var(--pt-ink);
+  border-bottom: 2px solid var(--pt-ink);
+}
+
+/* ------------------------------------------------------------------- cards */
+
+.pt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--pt-space-4);
+}
+
+.pt-card {
+  background: var(--pt-surface);
+  border-radius: var(--pt-radius-card);
+  padding: var(--pt-space-5);
+  box-shadow: var(--pt-shadow-card);
+}
+
+.pt-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--pt-space-4);
+}
+
+.pt-card__head h2 {
+  margin: 0;
+  font: var(--pt-text-heading);
+  letter-spacing: var(--pt-tracking-tight);
+}
+
+.pt-display {
+  margin: 0 0 var(--pt-space-4);
+  font: var(--pt-text-display);
+  letter-spacing: var(--pt-tracking-tight);
+}
+
+.pt-muted { color: var(--pt-ink-muted); margin: 0; }
+
+/* ------------------------------------------------------------------- stats */
+
+.pt-stats { display: flex; gap: var(--pt-space-6); margin: 0; }
+.pt-stats dt { color: var(--pt-ink-muted); font: var(--pt-text-caption); }
+.pt-stats dd { margin: var(--pt-space-1) 0 0; font: var(--pt-text-label); }
+
+.pt-allocation { list-style: none; margin: 0; padding: 0; }
+
+.pt-allocation li {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--pt-space-2) 0;
+  border-bottom: 1px solid var(--pt-border);
+  text-transform: capitalize;
+}
+
+.pt-allocation li:last-child { border-bottom: none; }
+
+/* ------------------------------------------------------------- direction */
+
+/*
+ * Gain and loss never reuse the brand accent (ADR-017), and the arrow carries
+ * the same information as the colour so direction survives a colour deficiency.
+ */
+.pt-delta--gain { color: var(--pt-gain); }
+.pt-delta--loss { color: var(--pt-loss); }
+.pt-delta--flat { color: var(--pt-flat); }
+
+/* ------------------------------------------------------------------ chips */
+
+.pt-chip {
+  background: var(--pt-surface-sunken);
+  color: var(--pt-ink-soft);
+  border-radius: var(--pt-radius-chip);
+  padding: var(--pt-space-1) var(--pt-space-3);
+  font: var(--pt-text-caption);
+}
+
+.pt-banner {
+  background: var(--pt-warn-wash);
+  color: var(--pt-warn);
+  border-radius: var(--pt-radius-control);
+  padding: var(--pt-space-3);
+  font: var(--pt-text-caption);
+  margin-bottom: var(--pt-space-3);
+}
+
+/* ------------------------------------------------------------------- form */
+
+.pt-form { display: grid; gap: var(--pt-space-2); margin-top: var(--pt-space-4); }
+.pt-form label { font: var(--pt-text-label); }
+
+.pt-form input {
+  font: var(--pt-text-body);
+  padding: var(--pt-space-3);
+  border: 1px solid var(--pt-border-strong);
+  border-radius: var(--pt-radius-control);
+  background: var(--pt-surface);
+  color: var(--pt-ink);
+}
+
+.pt-form input:focus-visible { outline: 2px solid var(--pt-accent); outline-offset: 1px; }
+
+.pt-form button {
+  font: var(--pt-text-label);
+  padding: var(--pt-space-3);
+  border: none;
+  border-radius: var(--pt-radius-control);
+  background: var(--pt-accent);
+  color: var(--pt-ink-inverse);
+  cursor: pointer;
+}
+
+.pt-form button:hover { background: var(--pt-accent-hover); }
+
+.pt-link {
+  border: none;
+  background: none;
+  color: var(--pt-ink-muted);
+  font: var(--pt-text-caption);
+  cursor: pointer;
+}
+
+.pt-error { color: var(--pt-loss); font: var(--pt-text-caption); margin: 0; }

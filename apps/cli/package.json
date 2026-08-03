@@ -5,6 +5,9 @@
   "type": "module",
   "main": "./src/index.ts",
   "dependencies": {
+    "@porttrack/app-services": "workspace:*",
+    "@porttrack/persistence": "workspace:*",
+    "@porttrack/pii-masker": "workspace:*",
     "@porttrack/shared-kernel": "workspace:*"
   }
 }

@@ -3,12 +3,66 @@
  * PRD FR-3 acceptance criteria driven through `app-services`.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { CompareSnapshotsUC, GenerateSnapshotUC, VaultUC } from '@porttrack/app-services';
-import { expectMoney, expectOk, inr } from '@porttrack/test-kit';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  CompareSnapshotsUC,
+  GenerateSnapshotUC,
+  VaultUC,
+  configure,
+} from '@porttrack/app-services';
+import { SnapshotRepository, Vault } from '@porttrack/persistence';
+import { SnapshotFactory } from '@porttrack/snapshot';
+import { anAsset, expectMoney, expectOk, fixedClock, inr, stubPrices } from '@porttrack/test-kit';
+
+/**
+ * Live holdings priced to ₹310,000,000, against a frozen snapshot of
+ * ₹250,000,000 — the figures the PRD's variance scenario is written around.
+ */
+const LIVE_ASSET = anAsset({ assetId: 'ast_live', symbol: 'TCS' });
+const LIVE_PRICES = stubPrices({ TCS: inr('3100000') });
+const SNAPSHOT_PRICES = stubPrices({ TCS: inr('2500000') });
+const NOW = '2026-08-02T12:00:00.000+05:30';
+
+async function openVault(): Promise<void> {
+  const dataDir = mkdtempSync(join(tmpdir(), 'porttrack-snap-'));
+  expectOk(await Vault.open({ dataDir, fileName: 'vault.db' }));
+  expectOk(await VaultUC.unlock('correct horse battery staple'));
+}
+
+/** Freezes the historical side the comparison scenario compares against. */
+async function seedHistoricalSnapshot(): Promise<void> {
+  configure({ assets: () => [LIVE_ASSET], liabilities: () => [], prices: SNAPSHOT_PRICES });
+  const valuation = expectOk(
+    await (await import('@porttrack/app-services')).ValuePortfolioUC.execute(
+      '2025-03-31T23:59:59.999+05:30',
+    ),
+  );
+  const snapshot = expectOk(
+    SnapshotFactory.build({
+      spec: {
+        snapshotId: 'SNAP_31MAR2025',
+        kind: 'CUSTOM',
+        scope: 'ALL',
+        asOf: '2025-03-31T23:59:59.999+05:30',
+      },
+      valuation,
+      createdAt: '2025-04-01T00:05:00.000+05:30',
+    }),
+  );
+  expectOk(await SnapshotRepository.persistImmutable(snapshot));
+}
 
 describe('FUNCTIONAL US-3.2/3.3 — dual compliance snapshot generation', () => {
   beforeEach(async () => {
-    await VaultUC.unlock('correct horse battery staple');
+    await openVault();
+    configure({
+      assets: () => [LIVE_ASSET],
+      liabilities: () => [],
+      prices: LIVE_PRICES,
+      clock: fixedClock(NOW),
+    });
   });
 
   describe('Scenario: Dual compliance snapshot generation (PRD FR-3 AC)', () => {
@@ -62,6 +116,16 @@ describe('FUNCTIONAL US-3.2/3.3 — dual compliance snapshot generation', () => 
 });
 
 describe('FUNCTIONAL US-3.4 — custom snapshots', () => {
+  beforeEach(async () => {
+    await openVault();
+    configure({
+      assets: () => [LIVE_ASSET],
+      liabilities: () => [],
+      prices: LIVE_PRICES,
+      clock: fixedClock(NOW),
+    });
+  });
+
   describe('Scenario: Custom historical snapshot reconstructs state as of a past date', () => {
     it('includes only transactions on or before the requested date', async () => {
       const snapshot = expectOk(await GenerateSnapshotUC.custom('2024-11-30'));
@@ -83,6 +147,17 @@ describe('FUNCTIONAL US-3.4 — custom snapshots', () => {
 });
 
 describe('FUNCTIONAL US-3.6 — live vs historical comparison', () => {
+  beforeEach(async () => {
+    await openVault();
+    await seedHistoricalSnapshot();
+    configure({
+      assets: () => [LIVE_ASSET],
+      liabilities: () => [],
+      prices: LIVE_PRICES,
+      clock: fixedClock(NOW),
+    });
+  });
+
   describe('Scenario: Live vs historical snapshot variance analysis (PRD FR-3 AC)', () => {
     it('reports a +₹60,000,000 delta between ₹250,000,000 and ₹310,000,000', async () => {
       const report = expectOk(

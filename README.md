@@ -9,27 +9,35 @@ local-first, privacy-first, containerized.
 | [`implementation_plan_portrack.md`](./implementation_plan_portrack.md) | ADRs, 80 user stories, acceptance criteria, DoD, milestone tracker |
 | [`ARCHITECTURE_portrack.md`](./ARCHITECTURE_portrack.md) | C4 component views + 7 data-flow sequence diagrams |
 
-## Current status — M7 complete
+## Current status — M8 complete
 
 ```
-540 tests   473 passing   67 failing   0 skipped
-typecheck   clean          lint   clean
+552 tests   534 passing   18 failing   0 skipped
+typecheck   clean          lint   clean          vite build ✓
 ```
 
-Nine packages fully green: `core-domain` (119), `tax-engine` (95), `snapshot` (57), `pii-masker`
-(37), `shared-kernel` (36), `fx-itbr` (33), `persistence` (30), `ingestion` (29), `platform` (17).
+**Ten of eleven packages green, and all 70 functional tests pass.** The only failures left in the
+repository are the 18 `compliance` tests, which are M10.
 
-> ⚠ **Tax rates are PROVISIONAL.** The bundled FY rule sets have the right structure but unverified
-> numbers. Computation works; `TaxRuleTable.assertFilingReady` refuses to emit any filing artifact
-> until a rule set is sourced from the Finance Act and marked `VERIFIED`.
+There is now a running application: a Fastify API over the domain engines, a React SPA styled from
+the sampled reference palette, and a headless CLI.
 
-> ⚠ **Name masking over-masks by design.** A missed name is a PII leak; an over-masked one is a
-> slightly less useful prompt. The fail-closed egress guard catches structured identifiers and
-> pipeline bugs, but it **cannot** catch a name the detector never recognised — see `verifier.ts`.
+> ⚠ **Tax rates are PROVISIONAL.** Computation works; `assertFilingReady` refuses to emit any filing
+> artifact until the rates are sourced from the Finance Act and marked `VERIFIED`. The dashboard
+> shows a provisional banner wherever a tax figure appears.
 
-The 67 failures are unimplemented stories, each reporting `NotImplementedError ... (US-x.y)`.
-Remaining: **M8** (API, UI, CLI — the first runnable application), **M9** containers, **M10**
-the Schedule FA/AL exports.
+> ⚠ **Name masking over-masks by design**, and the egress guard cannot catch a name the detector
+> never recognised — see `packages/pii-masker/src/verifier.ts`.
+
+Remaining: **M9** containers, **M10** Schedule FA/AL exports.
+
+## Running it
+
+```bash
+pnpm install
+pnpm --filter @porttrack/app-web dev   # SPA on :5173, proxying /api
+node apps/api/src/index.ts             # API on :8080
+```
 
 ## Commands
 

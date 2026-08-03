@@ -9,13 +9,30 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ComputeAdvanceTaxUC, VaultUC } from '@porttrack/app-services';
-import { expectMoney, expectOk, inr } from '@porttrack/test-kit';
+import { ComputeAdvanceTaxUC, setIncomeProfile, VaultUC } from '@porttrack/app-services';
+import { Vault } from '@porttrack/persistence';
+import { expectOk, inr } from '@porttrack/test-kit';
 
 describe('FUNCTIONAL US-5.10 — advance tax Q3', () => {
   beforeEach(async () => {
-    mkdtempSync(join(tmpdir(), 'porttrack-func-'));
-    await VaultUC.unlock('correct horse battery staple');
+    const dataDir = mkdtempSync(join(tmpdir(), 'porttrack-func-'));
+    expectOk(await Vault.open({ dataDir, fileName: 'vault.db' }));
+    expectOk(await VaultUC.unlock('correct horse battery staple'));
+
+    // "A user with estimated salary income in the 30% slab" (PRD FR-5 AC).
+    // Advance tax without a recorded income is meaningless, so the scenario
+    // must state it rather than assume a default.
+    setIncomeProfile({
+      financialYear: '2025-26',
+      assessmentYear: '2026-27',
+      grossSalary: inr('12000000'),
+      exemptAllowances: inr('0'),
+      chapterViaDeductions: inr('0'),
+      housePropertyIncome: inr('0'),
+      otherSourcesIncome: inr('0'),
+      tdsRemitted: inr('1850000'),
+      tcsCollected: inr('0'),
+    });
   });
 
   describe('Scenario: Advance tax calculation for Q3 with capital gains (PRD FR-5 AC)', () => {

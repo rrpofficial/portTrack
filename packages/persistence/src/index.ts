@@ -9,6 +9,8 @@ import type { Snapshot } from '@porttrack/snapshot';
 import { Vault } from './vault.js';
 import { currentVersion, runMigrations } from './migrations.js';
 import { deriveKey, zeroise } from './crypto.js';
+export { SnapshotRepository } from './snapshot-repository.js';
+export { Backup } from './backup.js';
 
 export { Vault } from './vault.js';
 export type { VaultConfig, VaultHandle } from './vault.js';
@@ -61,14 +63,4 @@ export const AssetRepository: AssetRepositoryOps = {
 export const LiabilityRepository: LiabilityRepositoryOps = {
   save: () => notImplemented('US-8.3', 'LiabilityRepository.save'),
   all: () => notImplemented('US-8.3', 'LiabilityRepository.all'),
-};
-export const SnapshotRepository: SnapshotRepositoryOps = {
-  persistImmutable: () => notImplemented('US-3.1', 'SnapshotRepository.persistImmutable'),
-  findById: () => notImplemented('US-3.1', 'SnapshotRepository.findById'),
-  exists: () => notImplemented('US-3.1', 'SnapshotRepository.exists'),
-  listIds: () => notImplemented('US-3.1', 'SnapshotRepository.listIds'),
-};
-export const Backup: BackupOps = {
-  backup: () => notImplemented('US-8.8', 'Backup.backup'),
-  restore: () => notImplemented('US-8.8', 'Backup.restore'),
 };

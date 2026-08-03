@@ -5,8 +5,9 @@
  * hermetic-network guarantee still holds.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync, globSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync, globSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { resolve, join } from 'node:path';
 import { buildApp } from '../../../apps/api/src/app.js';
 import { expectNoPii } from '@porttrack/test-kit';
 
@@ -16,7 +17,13 @@ const ROOT = resolve(import.meta.dirname, '../../..');
  * Built per test rather than in a `beforeAll`: a throwing hook marks the whole
  * file SKIPPED, which hides red tests behind a green-looking count.
  */
-const app = () => buildApp({ dataDir: '/tmp/porttrack-test' });
+/**
+ * One throwaway directory per run. A fixed path let a vault from an EARLIER run
+ * survive — created with a different passphrase — so unlock failed for reasons
+ * that had nothing to do with the code under test.
+ */
+const DATA_DIR = mkdtempSync(join(tmpdir(), 'porttrack-api-'));
+const app = () => buildApp({ dataDir: DATA_DIR });
 
 describe('US-8.11 Scenario: API exposes the use cases the SPA needs', () => {
   it.each([

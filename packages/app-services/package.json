@@ -12,6 +12,8 @@
     "@porttrack/compliance": "workspace:*",
     "@porttrack/core-domain": "workspace:*",
     "@porttrack/ingestion": "workspace:*",
+    "@porttrack/persistence": "workspace:*",
+    "@porttrack/platform": "workspace:*",
     "@porttrack/shared-kernel": "workspace:*",
     "@porttrack/snapshot": "workspace:*",
     "@porttrack/tax-engine": "workspace:*"
