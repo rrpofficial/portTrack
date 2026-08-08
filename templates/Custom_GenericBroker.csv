@@ -1,0 +1,6 @@
+# portTrack template: Custom_GenericBroker
+# Any broker without a dedicated parser
+# trade_type is buy or sell. Sells consume lots FIFO, oldest first.
+#
+# Lines beginning with # are ignored on import. Keep the header row exactly as it is.
+trade_date,symbol,isin,trade_type,quantity,price,currency

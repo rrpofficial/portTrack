@@ -36,8 +36,12 @@ export default tseslint.config(
       '**/coverage/**',
       'tests/fixtures/**',
       'eslint.config.js',
-      // Build scripts run under plain Node and sit outside the TS project.
+      // Build scripts and worker entry points run under plain Node and sit
+      // outside the TS project. The KDF worker in particular MUST stay a real
+      // .mjs file on disk — a worker is loaded by path at runtime, so it cannot
+      // be compiled or bundled away.
       '**/build.mjs',
+      '**/kdf-worker.mjs',
       'tests/fixtures/**/*.mjs',
     ],
   },

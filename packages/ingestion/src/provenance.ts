@@ -18,6 +18,16 @@ export function accountRef(rawAccount: string): string {
   return `acct_${createHash('sha256').update(rawAccount.trim()).digest('hex').slice(0, 16)}`;
 }
 
+/**
+ * A borrower's name is the most identifying field in the whole product — it is a
+ * private individual who never consented to being in anyone's dataset. It is
+ * hashed at the parser boundary so the raw name exists only in the encrypted
+ * vault, never in a payload, a log line or an export.
+ */
+export function borrowerRef(rawName: string): string {
+  return `brw_${createHash('sha256').update(rawName.trim().toLowerCase()).digest('hex').slice(0, 16)}`;
+}
+
 export function provenanceFor(
   sourceFile: string,
   sourceRow: number,

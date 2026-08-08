@@ -12,10 +12,14 @@ local-first, privacy-first, containerized.
 ## Current status — all milestones complete
 
 ```
-552 unit + functional   552 passing   0 failing   0 skipped
- 38 container (Docker)   38 passing   0 failing
-typecheck  clean         lint  clean         docker compose up ✓
+unit + functional   613 passing   0 failing   0 skipped
+container (Docker)   38 passing   0 failing
+E2E (Playwright)     28 passing   0 failing
+typecheck  clean     docker compose up ✓
 ```
+
+> 16 pre-existing lint errors remain in `tests/test-kit`, `tests/manual` and three functional specs.
+> They predate the current work and are listed rather than hidden.
 
 **Every one of the eleven packages is green**, and the containerised stack runs: `docker compose up`
 on a host with only Docker brings up the API and SPA, with your encrypted database on your own disk.
@@ -31,8 +35,10 @@ PII masking, API/UI/CLI, containers, and the Schedule FA/AL exports.
 > ⚠ **Name masking over-masks by design**, and the egress guard cannot catch a name the detector
 > never recognised — see `packages/pii-masker/src/verifier.ts`.
 
-> ⚠ **The Playwright E2E suite is written but unrun** — it needs browser binaries, which the
-> default-deny egress posture blocks. Eleven theme guard tests cover FR-9 from the outside instead.
+> ⚠ **Schedule FA Table A3 is unavailable, by choice.** It requires the peak value over the calendar
+> year, which needs a daily price and exchange-rate series this build does not record. It returns an
+> explicit error rather than rows computed from the closing value, which would understate the peak —
+> the dangerous direction under the Black Money Act. Table D and Schedule AL work.
 
 ## Running it
 
@@ -42,6 +48,47 @@ docker compose up
 ```
 
 Then open <http://localhost:5173>. Nothing else is required — no Node, no pnpm, no toolchain.
+
+### Manual entry — CSV templates
+
+Not everything has a broker export. For hand loans, property, cash, chit funds and unlisted shares,
+download a template from **Import → Manual entry**, fill it in a spreadsheet, and import it with
+*portTrack CSV template* selected.
+
+| Template | Records | Key columns |
+|---|---|---|
+| `Custom_HandLoans` | Money lent to friends or family | `borrower_name`, `principal_amount`, `interest_rate_pct`, `interest_basis`, `start_date` |
+| `Custom_RealEstate` | Land and buildings, at cost | `property_name`, `purchase_date`, `purchase_price`, `stamp_duty`, `registration_fee` |
+| `Custom_Cash` | Cash and bank balances | `account_label`, `as_of_date`, `balance` |
+| `Custom_ChitFunds` | Chit funds and savings schemes | `scheme_name`, `start_date`, `monthly_instalment`, `total_months` |
+| `Custom_UnlistedShares` | Private company shares | `company_name`, `acquisition_date`, `quantity`, `price_per_share` |
+| `Custom_GenericBroker` | Any broker without a parser | `trade_date`, `symbol`, `isin`, `trade_type`, `quantity`, `price` |
+
+The same files are committed at [`templates/`](./templates), generated from the parser's own column
+definitions by `npx tsx scripts/emit-templates.mts` — so the header you fill in and the header the
+importer matches against can never drift apart.
+
+**The template is identified by its header row**, which is why the header must stay exactly as
+downloaded. Each template declares the asset class it holds; nothing is inferred from the file, since
+asset class drives tax treatment and a wrong guess would be invisible. The `#` guidance lines at the
+top are ignored on import — fill the file in and upload it as-is.
+
+> `borrower_name` is hashed to an opaque reference the moment it is parsed. The raw name exists only
+> inside your encrypted vault, never in a payload, a log line or an export.
+
+### Unlocking takes a moment, on purpose
+
+The first unlock **sets** the passphrase; there is no default and no recovery path. Deriving the key
+runs Argon2id at the OWASP baseline, which occupies a core for a few hundred milliseconds — that cost
+is the point, since it is what makes guessing expensive.
+
+The button therefore disables itself and says so while it works. Derivation runs on a worker thread,
+so the rest of the API stays responsive: a health probe issued mid-unlock returns in 0.8 ms, against
+310 ms when the KDF ran on the main thread and froze everything.
+
+> A browser tab left open on the unlock screen will re-submit as soon as the API comes back. If you
+> are deliberately wiping `data/`, close or reload that tab first, or it will recreate the vault
+> under its old passphrase before you get there.
 
 ### Where your data lives
 
@@ -100,6 +147,17 @@ pnpm test:container    # FR-8 Docker acceptance — needs a Docker daemon
 pnpm test:e2e          # Playwright against the containerized stack
 ```
 
+`test:e2e` needs the stack running and a matching browser:
+
+```bash
+npx playwright install chromium         # once; downloads ~115 MB
+docker compose up -d
+PORTTRACK_WEB_PORT=5273 pnpm test:e2e   # match the port in your .env
+```
+
+It asserts what each section **renders**, not that its link exists — the distinction that let a
+completely dead navigation bar pass as DONE once already.
+
 ## Running the stack (from M9)
 
 ```bash
@@ -121,6 +179,10 @@ Docker upgrades, and you can back it up with ordinary host tools (ADR-012).
 - **PII masking runs in the browser and fails closed** (ADR-007, ADR-013). Two independent guards;
   neither warns-and-continues.
 - **Zero network egress by default** (ADR-010), through a single audited gateway.
+- **Periods are server-derived** (`GET /api/reference/periods`). The browser never decides which
+  financial year it is — a client a timezone away would disagree with the engine computing the tax.
+  The current FY and calendar year are always *offered*; the *default* is the most recent period that
+  can actually be computed, which is not the same thing.
 
 ## Repository layout
 

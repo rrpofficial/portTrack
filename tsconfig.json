@@ -20,6 +20,6 @@
       "@porttrack/test-kit": ["tests/test-kit/index.ts"]
     }
   },
-  "include": ["packages/**/*.ts", "apps/**/*.ts", "tests/**/*.ts", "*.ts"],
+  "include": ["packages/**/*.ts", "apps/**/*.ts", "tests/**/*.ts", "scripts/**/*.mts", "*.ts"],
   "exclude": ["apps/web"]
 }

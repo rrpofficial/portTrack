@@ -10,6 +10,7 @@
  * `.node` binary, and the wink model ships as data rather than code.
  */
 import { build } from 'esbuild';
+import { copyFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
@@ -52,3 +53,15 @@ await build({
   ),
   logLevel: 'info',
 });
+
+/*
+ * The Argon2id worker is a real file loaded by path at runtime, so the bundler
+ * neither sees it nor emits it. Without this copy the container silently falls
+ * back to deriving the key on the main thread — correct, but it reinstates the
+ * event-loop stall the worker exists to remove, and nothing would fail to say so.
+ */
+mkdirSync(resolve(here, 'dist'), { recursive: true });
+copyFileSync(
+  resolve(root, 'packages/persistence/src/kdf-worker.mjs'),
+  resolve(here, 'dist/kdf-worker.mjs'),
+);

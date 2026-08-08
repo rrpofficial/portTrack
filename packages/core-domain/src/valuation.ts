@@ -45,6 +45,23 @@ function positionCostBasis(asset: Asset): MoneyValue {
   return Money.sum(parts, asset.currency);
 }
 
+/**
+ * Whether the single `handLoan` block can speak for the whole asset.
+ *
+ * A `HandLoan` carries ONE principal, rate and start date, so it describes one
+ * receivable. An asset that somehow accumulated several lots holds several
+ * loans, and valuing it from that one block reports the first and discards the
+ * rest — which is exactly how ₹26,00,000 of money lent vanished from a net worth
+ * that still looked plausible.
+ *
+ * Falling back to cost basis here loses accrued interest, which is a visible
+ * understatement of a few percent. Reading one principal loses an entire loan.
+ * Between two imperfect answers this is the one a user can notice.
+ */
+function describesEveryLot(asset: Asset): boolean {
+  return asset.lots.length <= 1;
+}
+
 function heldQuantity(asset: Asset): string {
   return asset.lots
     .reduce((sum, lot) => sum.plus(lot.remainingQuantity), new Decimal(0))
@@ -103,9 +120,9 @@ export function value(input: ValuationInput): PortfolioValuation {
     let native: MoneyValue;
     let navSource: ValuedPosition['navSource'];
 
-    if (asset.assetClass === 'HAND_LOAN' && asset.handLoan) {
-      // A loan receivable has no lots: its cost basis is the principal still owed,
-      // and its value is that principal plus interest accrued to the valuation date.
+    if (asset.assetClass === 'HAND_LOAN' && asset.handLoan && describesEveryLot(asset)) {
+      // ONE loan: its cost basis is the principal still owed, and its value is
+      // that principal plus interest accrued to the valuation date.
       costBasis = handLoanOutstandingPrincipal(asset.handLoan, asOfDate);
       native = Money.add(costBasis, handLoanAccruedInterest(asset.handLoan, asOfDate));
     } else {

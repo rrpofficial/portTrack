@@ -11,6 +11,10 @@
  */
 import { argon2id } from '@noble/hashes/argon2.js';
 import { randomBytes } from 'node:crypto';
+import { Worker } from 'node:worker_threads';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * OWASP's recommended Argon2id baseline (19 MiB, t=2, p=1). Stored alongside the
@@ -30,6 +34,11 @@ export function newSalt(): Uint8Array {
   return new Uint8Array(randomBytes(16));
 }
 
+/**
+ * Synchronous derivation. Correct, and used by tests and the CLI, but it blocks
+ * the calling thread for the full work factor — see {@link deriveKeyAsync},
+ * which is what a server must use.
+ */
 export function deriveKey(
   passphrase: string,
   salt: Uint8Array,
@@ -40,6 +49,55 @@ export function deriveKey(
     m: params.m,
     p: params.p,
     dkLen: params.dkLen,
+  });
+}
+
+/** Resolved once, because the worker's location differs between source and bundle. */
+const workerPath = ((): string | undefined => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    // Running from source, beside this file.
+    join(here, 'kdf-worker.mjs'),
+    // Running from the esbuild bundle, which flattens `src/` away.
+    join(here, '..', 'kdf-worker.mjs'),
+  ];
+  return candidates.find((candidate) => existsSync(candidate));
+})();
+
+/**
+ * Argon2id off the event loop.
+ *
+ * Falls back to the synchronous path when the worker file is absent — a missing
+ * worker must degrade to "slower and still correct", never to "cannot open your
+ * vault". The fallback is the only reason this cannot fail closed.
+ */
+export function deriveKeyAsync(
+  passphrase: string,
+  salt: Uint8Array,
+  params: KdfParams = KDF_PARAMS,
+): Promise<Uint8Array> {
+  if (workerPath === undefined) {
+    return Promise.resolve(deriveKey(passphrase, salt, params));
+  }
+
+  return new Promise<Uint8Array>((resolve, reject) => {
+    const worker = new Worker(workerPath, {
+      workerData: { passphrase, salt: Buffer.from(salt), params },
+    });
+
+    worker.once('message', (buffer: ArrayBuffer) => {
+      resolve(new Uint8Array(buffer));
+      void worker.terminate();
+    });
+    worker.once('error', (error) => {
+      reject(error instanceof Error ? error : new Error(String(error)));
+    });
+    worker.once('exit', (code) => {
+      // A worker that dies before posting would otherwise leave the unlock
+      // request hanging forever, which is the exact failure this file exists to
+      // remove.
+      if (code !== 0) reject(new Error(`key derivation worker exited with code ${String(code)}`));
+    });
   });
 }
 

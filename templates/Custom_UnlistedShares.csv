@@ -1,0 +1,7 @@
+# portTrack template: Custom_UnlistedShares
+# Unlisted and private company shares
+# Unlisted shares have no published price, so they are valued at cost until you record a
+# disposal.
+#
+# Lines beginning with # are ignored on import. Keep the header row exactly as it is.
+company_name,acquisition_date,quantity,price_per_share,currency

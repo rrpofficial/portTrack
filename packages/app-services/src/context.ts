@@ -8,6 +8,7 @@
  */
 import { Money, type Clock } from '@porttrack/shared-kernel';
 import type { Asset, FxSource, Liability, PriceSource } from '@porttrack/core-domain';
+import { AssetRepository, LiabilityRepository } from '@porttrack/persistence';
 import { createLogger, type Logger } from '@porttrack/platform';
 
 export interface AppContext {
@@ -15,12 +16,19 @@ export interface AppContext {
   readonly unlocked: boolean;
 }
 
+/**
+ * Holdings may resolve synchronously (a test fixture) or asynchronously (the
+ * vault). Both are awaited at the call site, so a suite can keep wiring a plain
+ * array while production reads from SQLite.
+ */
+export type AssetSource = () => readonly Asset[] | Promise<readonly Asset[]>;
+export type LiabilitySource = () => readonly Liability[] | Promise<readonly Liability[]>;
+
 export interface Ports {
   readonly clock: Clock;
   readonly logger: Logger;
-  /** Live holdings. Backed by the vault once persistence repositories land. */
-  readonly assets: () => readonly Asset[];
-  readonly liabilities: () => readonly Liability[];
+  readonly assets: AssetSource;
+  readonly liabilities: LiabilitySource;
   readonly prices?: PriceSource;
   readonly fx?: FxSource;
 }
@@ -34,12 +42,25 @@ const systemClock: Clock = {
 
 const NO_SINK = { write: () => undefined };
 
-let ports: Ports = {
-  clock: systemClock,
-  logger: createLogger({ sink: NO_SINK, now: () => systemClock.now() }),
-  assets: () => [],
-  liabilities: () => [],
-};
+/**
+ * The vault is the default source of holdings. It previously defaulted to an
+ * empty array, which meant the shipped application valued a portfolio it never
+ * read — the dashboard reported ₹0 no matter what had been imported, and every
+ * test passed because each one supplied its own fixture.
+ *
+ * A locked vault yields an empty ledger rather than an error, so this is safe to
+ * call before unlock.
+ */
+function vaultBackedPorts(): Ports {
+  return {
+    clock: systemClock,
+    logger: createLogger({ sink: NO_SINK, now: () => systemClock.now() }),
+    assets: () => AssetRepository.all(),
+    liabilities: () => LiabilityRepository.all(),
+  };
+}
+
+let ports: Ports = vaultBackedPorts();
 
 export function configure(overrides: Partial<Ports>): void {
   ports = { ...ports, ...overrides };
@@ -51,12 +72,7 @@ export function currentPorts(): Ports {
 
 /** Test seam: restores the default wiring between scenarios. */
 export function resetPorts(): void {
-  ports = {
-    clock: systemClock,
-    logger: createLogger({ sink: NO_SINK, now: () => systemClock.now() }),
-    assets: () => [],
-    liabilities: () => [],
-  };
+  ports = vaultBackedPorts();
 }
 
 export const ZERO_INR = Money.zero('INR');

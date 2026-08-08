@@ -10,7 +10,7 @@
 import { Ok, type Result } from '@porttrack/shared-kernel';
 import { parseCams } from './cams.js';
 import { parseEtrade, parseVested, parseZerodhaTradebook, type ParseOutcome } from './brokers.js';
-import { parseTemplate } from './templates.js';
+import { parseTemplateFile } from './templates.js';
 import { partition } from './duplicates.js';
 import type { ImportReport, IngestInput } from './types.js';
 
@@ -26,8 +26,12 @@ async function runParser(input: IngestInput): Promise<Result<ParseOutcome>> {
     case 'ETRADE':
       return parseEtrade(text, input.fileName);
     case 'TEMPLATE': {
-      const parsed = parseTemplate(text, input.fileName);
-      return parsed.ok ? Ok({ transactions: parsed.value, errors: [] }) : parsed;
+      const parsed = parseTemplateFile(text, input.fileName);
+      // Row errors are carried through, not swallowed: a template is hand-edited,
+      // so a typo in one row is the normal case and the user needs to see which.
+      return parsed.ok
+        ? Ok({ transactions: parsed.value.transactions, errors: parsed.value.errors })
+        : parsed;
     }
     case 'CAMS': {
       const parsed = await parseCams({ pdf: input.file, password: input.password ?? '' });

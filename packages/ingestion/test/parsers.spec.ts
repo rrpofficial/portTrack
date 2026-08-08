@@ -266,7 +266,11 @@ describe('US-4.6 standardised CSV templates', () => {
 
     it('generates a downloadable CSV with a header row for each template', () => {
       for (const name of TemplateRegistry.list()) {
-        expect(TemplateRegistry.generate(name).split('\n')[0]).toContain(',');
+        const lines = TemplateRegistry.generate(name).split('\n').filter((line) => line.length > 0);
+        // The file opens with `#` guidance for the person filling it in; the
+        // header is the first line that is not a comment.
+        const header = lines.find((line) => !line.startsWith('#'));
+        expect(header).toContain(',');
       }
     });
   });

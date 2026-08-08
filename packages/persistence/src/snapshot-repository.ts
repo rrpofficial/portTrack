@@ -16,6 +16,24 @@ interface SnapshotRow {
   readonly content_hash: string;
 }
 
+interface SummaryRow {
+  readonly snapshot_id: string;
+  readonly kind: string;
+  readonly scope: string;
+  readonly as_of: string;
+  readonly content_hash: string;
+  readonly created_at: string;
+}
+
+export interface SnapshotSummary {
+  readonly snapshotId: string;
+  readonly kind: string;
+  readonly scope: string;
+  readonly asOf: string;
+  readonly contentHash: string;
+  readonly createdAt: string;
+}
+
 export const SnapshotRepository = {
   persistImmutable(snapshot: Snapshot): Promise<Result<void>> {
     const db = Vault.connection();
@@ -64,6 +82,31 @@ export const SnapshotRepository = {
       .prepare('SELECT 1 AS present FROM snapshots WHERE snapshot_id = ?')
       .get(snapshotId);
     return Promise.resolve(row !== undefined);
+  },
+
+  /**
+   * Summaries for the snapshot list. Deliberately not the full payload: a
+   * listing of twenty snapshots would otherwise deserialise twenty complete
+   * portfolios to show twenty rows.
+   */
+  list(): Promise<readonly SnapshotSummary[]> {
+    if (!Vault.isUnlocked()) return Promise.resolve([]);
+    const rows = Vault.connection()
+      .prepare(
+        `SELECT snapshot_id, kind, scope, as_of, content_hash, created_at
+         FROM snapshots ORDER BY as_of DESC, snapshot_id`,
+      )
+      .all() as SummaryRow[];
+    return Promise.resolve(
+      rows.map((row) => ({
+        snapshotId: row.snapshot_id,
+        kind: row.kind,
+        scope: row.scope,
+        asOf: row.as_of,
+        contentHash: row.content_hash,
+        createdAt: row.created_at,
+      })),
+    );
   },
 
   listIds(): Promise<readonly string[]> {

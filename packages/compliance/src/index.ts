@@ -9,6 +9,7 @@
 import { compute, computeFromAcquisition } from './peak-value.js';
 import { accountRef, calendarYearWindow, tableA3, tableD } from './schedule-fa.js';
 import { generate } from './schedule-al.js';
+import { scheduleAlItems } from './al-items.js';
 import { toCsv, toJson, validate } from './itr-export.js';
 
 export * from './types.js';
@@ -23,7 +24,8 @@ export const PeakValueCalculator = { compute, computeFromAcquisition };
 export const ScheduleFaGenerator = { tableA3, tableD, calendarYearWindow, accountRef };
 
 /** US-6.4 — assets and liabilities at year end. */
-export const ScheduleAlGenerator = { generate };
+export const ScheduleAlGenerator = { generate, itemsFrom: scheduleAlItems };
+export type { AlItemsInput } from './al-items.js';
 
 /** US-6.5 — ITR-ready JSON and CSV. */
 export const ItrExporter = { toJson, toCsv, validate };

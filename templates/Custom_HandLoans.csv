@@ -1,0 +1,7 @@
+# portTrack template: Custom_HandLoans
+# Money lent to friends or family, with interest terms
+# interest_basis is SIMPLE or COMPOUND. Interest accrues on a 30/360 basis. The borrower
+# name is hashed on import and never leaves your vault.
+#
+# Lines beginning with # are ignored on import. Keep the header row exactly as it is.
+borrower_name,principal_amount,interest_rate_pct,interest_basis,start_date,currency
