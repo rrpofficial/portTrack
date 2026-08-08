@@ -24,7 +24,14 @@ import {
   VaultUnlockError,
   type Result,
 } from '@porttrack/shared-kernel';
-import { KDF_PARAMS, deriveKey, newSalt, toHex, zeroise, type KdfParams } from './crypto.js';
+import {
+  KDF_PARAMS,
+  deriveKeyAsync,
+  newSalt,
+  toHex,
+  zeroise,
+  type KdfParams,
+} from './crypto.js';
 import { runMigrations } from './migrations.js';
 
 /** SQLite3MultipleCiphers scheme name for AES-256-CBC + HMAC-SHA512. */
@@ -92,9 +99,9 @@ export const Vault = {
     return Promise.resolve(Ok({ schemaVersion: 0, locked: true }));
   },
 
-  unlock(passphrase: string): Promise<Result<VaultHandle>> {
+  async unlock(passphrase: string): Promise<Result<VaultHandle>> {
     if (!state) {
-      return Promise.resolve(Err(new VaultStateError('vault is not open')));
+      return Err(new VaultStateError('vault is not open'));
     }
     const current = state;
 
@@ -105,12 +112,20 @@ export const Vault = {
      * anyone can open, and it would look like a successful unlock.
      */
     if (passphrase.length === 0) {
-      return Promise.resolve(
-        Err(new VaultUnlockError('a vault passphrase is required and cannot be empty')),
-      );
+      return Err(new VaultUnlockError('a vault passphrase is required and cannot be empty'));
     }
 
-    const key = deriveKey(passphrase, Buffer.from(current.meta.saltHex, 'hex'), current.meta.params);
+    /*
+     * Derived on a worker thread. Argon2id at the OWASP baseline occupies a core
+     * for ~350 ms, and doing that on the main thread froze the entire API for the
+     * duration — health probes included — so concurrent unlocks serialized and
+     * the UI looked hung. See crypto.ts.
+     */
+    const key = await deriveKeyAsync(
+      passphrase,
+      Buffer.from(current.meta.saltHex, 'hex'),
+      current.meta.params,
+    );
     let db: Database.Database | undefined;
 
     try {
@@ -133,15 +148,13 @@ export const Vault = {
 
       current.db = db;
       current.key = key;
-      return Promise.resolve(Ok({ schemaVersion, locked: false }));
+      return Ok({ schemaVersion, locked: false });
     } catch {
       db?.close();
       zeroise(key);
       // Deliberately uninformative: the message must not reveal whether the vault
       // holds data, nor echo the attempted passphrase.
-      return Promise.resolve(
-        Err(new VaultUnlockError('unable to unlock vault: wrong passphrase or corrupted data')),
-      );
+      return Err(new VaultUnlockError('unable to unlock vault: wrong passphrase or corrupted data'));
     }
   },
 

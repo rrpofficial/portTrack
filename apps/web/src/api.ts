@@ -11,10 +11,31 @@ export interface ApiError {
 
 export type ApiResult<T> = { ok: true; value: T } | { ok: false; error: ApiError };
 
-async function request<T>(path: string, init?: RequestInit): Promise<ApiResult<T>> {
+/**
+ * Every request is bounded.
+ *
+ * `fetch` has no default timeout, so a request the backend never answers leaves
+ * the promise pending forever and the UI showing a spinner with no way out. The
+ * budget is generous because unlocking runs a deliberately slow key derivation —
+ * the point is to convert an infinite hang into a stateable error, not to be
+ * impatient.
+ */
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+async function request<T>(
+  path: string,
+  init?: RequestInit,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<ApiResult<T>> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
   try {
     const response = await fetch(`/api${path}`, {
       headers: { 'content-type': 'application/json' },
+      signal: controller.signal,
       ...init,
     });
     const body: unknown = await response.json().catch(() => ({}));
@@ -26,10 +47,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResult<T
       };
     }
     return { ok: true, value: body as T };
-  } catch {
+  } catch (cause) {
+    // Distinguished so the UI can say "still working, try again" rather than
+    // "the backend is down", which would be wrong and alarming.
+    if (cause instanceof DOMException && cause.name === 'AbortError') {
+      return {
+        ok: false,
+        error: { code: 'TIMEOUT', message: 'the portTrack API did not respond in time' },
+      };
+    }
     // The backend is reachable only over the internal network; a failure here is
     // the API being down, never a CORS or cross-origin problem.
     return { ok: false, error: { code: 'UNREACHABLE', message: 'the portTrack API is not responding' } };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -56,12 +87,291 @@ export interface Valuation {
   readonly byAssetClass: Readonly<Record<string, Money>>;
 }
 
+export interface AcquisitionLot {
+  readonly lotId: string;
+  readonly acquisitionDate: string;
+  readonly quantity: string;
+  readonly remainingQuantity: string;
+  readonly costPerUnit: Money;
+}
+
+export interface IncomeEvent {
+  readonly eventId: string;
+  readonly kind: string;
+  readonly date: string;
+  readonly grossAmount: Money;
+  readonly taxWithheld: Money;
+}
+
+export interface LedgerAsset {
+  readonly assetId: string;
+  readonly assetClass: string;
+  readonly jurisdiction: string;
+  readonly currency: string;
+  readonly symbol?: string;
+  readonly isin?: string;
+  readonly lots: readonly AcquisitionLot[];
+  readonly incomeEvents: readonly IncomeEvent[];
+}
+
+export interface LedgerLiability {
+  readonly liabilityId: string;
+  readonly kind: string;
+  readonly principalOutstanding: Money;
+  readonly interestRatePct: string;
+  readonly asOf: string;
+}
+
+export interface LedgerExit {
+  readonly txnId: string;
+  readonly assetId: string;
+  readonly exitDate: string;
+  readonly quantity: string;
+  readonly pricePerUnit: Money;
+}
+
+export interface Ledger {
+  readonly assets: readonly LedgerAsset[];
+  readonly liabilities: readonly LedgerLiability[];
+  readonly exits: readonly LedgerExit[];
+}
+
+export type ParserName =
+  | 'ZERODHA_TRADEBOOK'
+  | 'ZERODHA_TAX_PNL'
+  | 'VESTED'
+  | 'ETRADE'
+  | 'CAMS'
+  | 'TEMPLATE';
+
+export interface RowError {
+  readonly row: number;
+  readonly column: string;
+  readonly value: string;
+  readonly reason: string;
+  readonly expectedFormat?: string;
+}
+
+export interface UnappliedRow {
+  readonly kind: string;
+  readonly date: string;
+  readonly symbol?: string;
+  readonly sourceRow: number;
+  readonly reason: string;
+}
+
+export interface FinancialYearOption {
+  readonly financialYear: string;
+  readonly assessmentYear: string;
+  readonly isCurrent: boolean;
+  readonly rulesAvailable: boolean;
+  readonly rulesStatus?: 'PROVISIONAL' | 'VERIFIED';
+}
+
+export interface CalendarYearOption {
+  readonly calendarYear: number;
+  readonly isCurrent: boolean;
+  readonly isComplete: boolean;
+}
+
+export interface Periods {
+  readonly today: string;
+  readonly currentFinancialYear: string;
+  readonly currentAssessmentYear: string;
+  readonly currentCalendarYear: number;
+  /** Where a picker starts — not always the current year; see the API doc. */
+  readonly defaultFinancialYear: string;
+  readonly defaultCalendarYear: number;
+  readonly financialYears: readonly FinancialYearOption[];
+  readonly calendarYears: readonly CalendarYearOption[];
+}
+
+export interface TemplateSummary {
+  readonly name: string;
+  readonly description: string;
+  readonly assetClass: string;
+  readonly columns: readonly string[];
+  readonly guidance: string;
+}
+
+export interface ImportReport {
+  readonly created: number;
+  readonly duplicates: number;
+  readonly rejected: number;
+  readonly committed: boolean;
+  readonly errors: readonly RowError[];
+  readonly unapplied?: readonly UnappliedRow[];
+}
+
+export interface SnapshotSummary {
+  readonly snapshotId: string;
+  readonly kind: string;
+  readonly scope: string;
+  readonly asOf: string;
+  readonly contentHash: string;
+  readonly createdAt: string;
+}
+
+export interface PositionDelta {
+  readonly assetId: string;
+  readonly bucket: string;
+  readonly quantityBefore: string;
+  readonly quantityAfter: string;
+  readonly valueBefore: Money;
+  readonly valueAfter: Money;
+  readonly valueDelta: Money;
+  readonly valueDeltaPct: string;
+  readonly priceEffect?: Money;
+  readonly currencyEffect?: Money;
+}
+
+export interface AllocationRow {
+  readonly assetClass: string;
+  readonly beforePct: string;
+  readonly afterPct: string;
+}
+
+export interface VarianceReport {
+  readonly netWorthBefore: Money;
+  readonly netWorthAfter: Money;
+  readonly netWorthDelta: Money;
+  readonly netWorthDeltaPct: string;
+  readonly positions: readonly PositionDelta[];
+  readonly topGainers: readonly PositionDelta[];
+  readonly newAdditions: readonly PositionDelta[];
+  readonly liquidations: readonly PositionDelta[];
+  readonly allocation: readonly AllocationRow[];
+}
+
+export interface AdvanceTaxInstallment {
+  readonly quarter: string;
+  readonly dueDate: string;
+  readonly cumulativePercentage: string;
+  readonly totalLiability: Money;
+  readonly cumulativeRequired: Money;
+  readonly tdsCredit: Money;
+  readonly alreadyPaid: Money;
+  readonly netPayable: Money;
+}
+
+export interface TaxComputation {
+  readonly regime: string;
+  readonly totalIncome: Money;
+  readonly baseTax: Money;
+  readonly surcharge: Money;
+  readonly cess: Money;
+  readonly totalLiability: Money;
+}
+
+export interface RegimeComparison {
+  readonly old: TaxComputation;
+  readonly new: TaxComputation;
+  readonly recommended: string;
+  readonly deductionsForgone: readonly string[];
+  readonly hasIncomeProfile: boolean;
+}
+
+export interface IncomeProfileState {
+  readonly present: boolean;
+  readonly profile: Record<string, unknown> | null;
+}
+
+export interface ScheduleAlSection {
+  readonly head: string;
+  readonly items: readonly { readonly description: string; readonly costOfAcquisition: Money }[];
+  readonly total: Money;
+}
+
+export interface ScheduleAl {
+  readonly assessmentYear: string;
+  readonly required: boolean;
+  readonly notRequiredReason?: string;
+  readonly immovableProperty: ScheduleAlSection;
+  readonly financialAssets: ScheduleAlSection;
+  readonly cashInHand: ScheduleAlSection;
+  readonly loansAndAdvancesGiven: ScheduleAlSection;
+  readonly jewellery: ScheduleAlSection;
+  readonly vehicles: ScheduleAlSection;
+  readonly liabilities: ScheduleAlSection;
+}
+
+export interface ScheduleFaDRow {
+  readonly countryCode: string;
+  readonly institutionName: string;
+  readonly accountRef: string;
+  readonly peakBalanceInr: Money;
+  readonly closingBalanceInr: Money;
+}
+
+export interface ScheduleFa {
+  readonly calendarYear: number;
+  readonly tableA3: readonly unknown[] | null;
+  readonly tableA3Error: ApiError | null;
+  readonly tableD: readonly ScheduleFaDRow[] | null;
+  readonly tableDError: ApiError | null;
+}
+
 export const api = {
   unlock: (passphrase: string) =>
     request<{ unlocked: boolean }>('/vault/unlock', {
       method: 'POST',
       body: JSON.stringify({ passphrase }),
     }),
+  lock: () => request<{ unlocked: boolean }>('/vault/lock', { method: 'POST' }),
   valuation: () => request<Valuation>('/portfolio/valuation'),
   ready: () => request<{ status: string }>('/health/ready'),
+
+  ledger: () => request<Ledger>('/ledger/assets'),
+
+  /**
+   * Server-derived. The browser must not decide which financial year it is —
+   * a client in another timezone would disagree with the engine computing the tax.
+   */
+  periods: () => request<Periods>('/reference/periods'),
+
+  templates: () => request<{ templates: readonly TemplateSummary[] }>('/templates'),
+  /** Direct href — the browser downloads it, no JSON round trip. */
+  templateUrl: (name: string) => `/api/templates/${encodeURIComponent(name)}`,
+
+  importStatement: (input: {
+    file: string;
+    fileName: string;
+    parser: ParserName;
+    password?: string;
+  }) =>
+    request<ImportReport>('/imports', {
+      method: 'POST',
+      // LENIENT: the report lists every rejected row, so the user sees what was
+      // skipped instead of losing a whole statement to one bad line.
+      body: JSON.stringify({ ...input, mode: 'LENIENT' }),
+    }),
+
+  snapshots: () => request<{ snapshots: readonly SnapshotSummary[] }>('/snapshots'),
+  createSnapshot: (asOf?: string) =>
+    request<{ snapshotId?: string }>('/snapshots', {
+      method: 'POST',
+      body: JSON.stringify(asOf === undefined ? {} : { asOf }),
+    }),
+  compareToLive: (snapshotId: string) =>
+    request<VarianceReport>(`/snapshots/${encodeURIComponent(snapshotId)}/compare?target=live`),
+
+  advanceTax: (fy: string, quarter: string) =>
+    request<AdvanceTaxInstallment>(
+      `/tax/advance?fy=${encodeURIComponent(fy)}&quarter=${encodeURIComponent(quarter)}`,
+    ),
+  regimes: (fy: string) => request<RegimeComparison>(`/tax/regimes?fy=${encodeURIComponent(fy)}`),
+  incomeProfile: () => request<IncomeProfileState>('/tax/income-profile'),
+  saveIncomeProfile: (profile: Record<string, unknown>) =>
+    request<{ present: boolean }>('/tax/income-profile', {
+      method: 'POST',
+      body: JSON.stringify({ profile }),
+    }),
+
+  scheduleFa: (calendarYear: number) =>
+    request<ScheduleFa>(`/compliance/schedule-fa?cy=${String(calendarYear)}`),
+  scheduleAl: (fy: string) =>
+    request<ScheduleAl>(`/compliance/schedule-al?fy=${encodeURIComponent(fy)}`),
+
+  egressLog: () => request<{ entries: readonly unknown[] }>('/audit/egress'),
+  applicationLog: () => request<{ lines: readonly string[] }>('/audit/log'),
 };

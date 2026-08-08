@@ -4,27 +4,31 @@
  * Deliberately small: the SPA renders what the API returns and holds no domain
  * logic. Everything shown here is computed server-side by the engines, so the
  * browser cannot disagree with a snapshot or a tax figure.
+ *
+ * The nav used to set a `section` state that nothing read, so every link
+ * highlighted and rendered the dashboard regardless. Sections are now real
+ * routes; `useSection` is the single source of truth and the address bar stays
+ * in step, so a deep link and the back button both work.
  */
 import { useCallback, useEffect, useState, type SyntheticEvent } from 'react';
 import { api, type Valuation } from './api.js';
-import { Amount, Card, Chip, ProvisionalBanner } from './components/primitives.js';
-
-const SECTIONS = [
-  'Dashboard',
-  'Ledger',
-  'Import',
-  'Snapshots',
-  'Tax',
-  'Compliance',
-  'Settings',
-] as const;
+import { Card } from './components/primitives.js';
+import { SECTIONS, hrefFor, useSection } from './router.js';
+import { Compliance } from './views/Compliance.js';
+import { Dashboard } from './views/Dashboard.js';
+import { Import } from './views/Import.js';
+import { Ledger } from './views/Ledger.js';
+import { Settings } from './views/Settings.js';
+import { Snapshots } from './views/Snapshots.js';
+import { Tax } from './views/Tax.js';
 
 export function App() {
   const [unlocked, setUnlocked] = useState(false);
   const [passphrase, setPassphrase] = useState('');
   const [error, setError] = useState<string | undefined>();
+  const [unlocking, setUnlocking] = useState(false);
   const [valuation, setValuation] = useState<Valuation | undefined>();
-  const [section, setSection] = useState<(typeof SECTIONS)[number]>('Dashboard');
+  const section = useSection();
 
   const refresh = useCallback(async () => {
     const result = await api.valuation();
@@ -35,26 +39,50 @@ export function App() {
     if (unlocked) void refresh();
   }, [unlocked, refresh]);
 
-  const submitUnlock = useCallback(
-    async (): Promise<void> => {
-      setError(undefined);
+  /**
+   * Unlocking is SLOW by design — Argon2id at the OWASP baseline takes a few
+   * hundred milliseconds, and deliberately so. Without a busy state the screen
+   * did not change at all while it ran, so the natural response was to click
+   * again; every extra click queued another key derivation behind the first,
+   * and the wait grew linearly until the app looked frozen.
+   *
+   * `unlocking` is therefore both the progress indicator and the re-entry guard.
+   */
+  const submitUnlock = useCallback(async (): Promise<void> => {
+    if (unlocking) return;
+
+    setError(undefined);
+    setUnlocking(true);
+    try {
       const result = await api.unlock(passphrase);
       if (!result.ok) {
-        setError('That passphrase did not unlock the vault.');
+        setError(
+          result.error.code === 'TIMEOUT'
+            ? 'The vault did not respond. It may still be busy — wait a moment and try again.'
+            : 'That passphrase did not unlock the vault.',
+        );
         return;
       }
       // Cleared immediately: never held in state longer than the request.
       setPassphrase('');
       setUnlocked(true);
-    },
-    [passphrase],
-  );
+    } finally {
+      // In `finally` so a thrown request cannot strand the button disabled with
+      // no way back except a reload.
+      setUnlocking(false);
+    }
+  }, [passphrase, unlocking]);
 
   /** React discards a returned promise, so rejections are handled here. */
   function unlock(event: SyntheticEvent): void {
     event.preventDefault();
     void submitUnlock();
   }
+
+  const onLocked = useCallback(() => {
+    setUnlocked(false);
+    setValuation(undefined);
+  }, []);
 
   if (!unlocked) {
     return (
@@ -70,10 +98,27 @@ export function App() {
               type="password"
               value={passphrase}
               autoComplete="current-password"
-              onChange={(event) => { setPassphrase(event.target.value); }}
+              disabled={unlocking}
+              onChange={(event) => {
+                setPassphrase(event.target.value);
+              }}
             />
-            <button type="submit">Unlock</button>
-            {error !== undefined && <p className="pt-error" role="alert">{error}</p>}
+            <button type="submit" disabled={unlocking} data-testid="unlock-button">
+              {unlocking ? 'Unlocking…' : 'Unlock'}
+            </button>
+            {unlocking && (
+              // Says WHY it is slow. A deliberate work factor that looks like a
+              // stall is indistinguishable from a broken app.
+              <p className="pt-muted" role="status" data-testid="unlock-progress">
+                Deriving your encryption key. This takes a moment by design — it is what makes a
+                guessed passphrase expensive to try.
+              </p>
+            )}
+            {error !== undefined && (
+              <p className="pt-error" role="alert">
+                {error}
+              </p>
+            )}
           </form>
         </Card>
       </main>
@@ -91,9 +136,9 @@ export function App() {
           {SECTIONS.map((name) => (
             <a
               key={name}
-              href={`#${name.toLowerCase()}`}
+              href={hrefFor(name)}
               className={name === section ? 'is-active' : ''}
-              onClick={() => { setSection(name); }}
+              aria-current={name === section ? 'page' : undefined}
             >
               {name}
             </a>
@@ -101,64 +146,14 @@ export function App() {
         </nav>
       </header>
 
-      <main className="pt-grid">
-        <Card title="Net worth" action={<Chip>Live</Chip>}>
-          {valuation === undefined ? (
-            <p className="pt-muted">Loading your portfolio…</p>
-          ) : (
-            <>
-              <p className="pt-display pt-numeric" data-testid="net-worth">
-                {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(
-                  Number(valuation.netWorth.amount),
-                )}
-              </p>
-              <dl className="pt-stats">
-                <div>
-                  <dt>Gross assets</dt>
-                  <dd><Amount value={valuation.grossAssets} /></dd>
-                </div>
-                <div>
-                  <dt>Liabilities</dt>
-                  <dd><Amount value={valuation.totalLiabilities} /></dd>
-                </div>
-                <div>
-                  <dt>Holdings</dt>
-                  <dd className="pt-numeric">{valuation.positions.length}</dd>
-                </div>
-              </dl>
-            </>
-          )}
-        </Card>
-
-        <Card title="Asset allocation">
-          <div data-testid="allocation-breakdown">
-            {valuation === undefined || Object.keys(valuation.byAssetClass).length === 0 ? (
-              <p className="pt-muted">No holdings recorded yet.</p>
-            ) : (
-              <ul className="pt-allocation">
-                {Object.entries(valuation.byAssetClass).map(([assetClass, value]) => (
-                  <li key={assetClass}>
-                    <span>{assetClass.replaceAll('_', ' ').toLowerCase()}</span>
-                    <Amount value={value} />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </Card>
-
-        <Card title="Snapshots" action={<button type="button" className="pt-link">Compare</button>}>
-          <p className="pt-muted">
-            Compliance snapshots freeze on 31 March (domestic) and 31 December (foreign).
-          </p>
-        </Card>
-
-        <Card title="Advance tax">
-          <ProvisionalBanner />
-          <p className="pt-muted">
-            Quarterly instalments appear here once your income for the year is recorded.
-          </p>
-        </Card>
+      <main>
+        {section === 'Dashboard' && <Dashboard valuation={valuation} />}
+        {section === 'Ledger' && <Ledger />}
+        {section === 'Import' && <Import onImported={() => void refresh()} />}
+        {section === 'Snapshots' && <Snapshots />}
+        {section === 'Tax' && <Tax />}
+        {section === 'Compliance' && <Compliance />}
+        {section === 'Settings' && <Settings onLocked={onLocked} />}
       </main>
     </div>
   );

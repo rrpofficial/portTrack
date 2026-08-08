@@ -1,0 +1,625 @@
+/**
+ * Asset and liability persistence (US-8.3).
+ *
+ * An Asset is an aggregate: the row in `assets` is meaningless without its lots,
+ * income events and corporate actions, so every write is one transaction and
+ * every read reassembles the whole thing. Saving is upsert-by-aggregate — child
+ * rows are replaced wholesale rather than diffed, because a partial update that
+ * leaves a stale lot behind produces a cost basis that is wrong in a way nothing
+ * downstream can detect.
+ *
+ * Money is stored as a decimal string plus a currency column, never REAL
+ * (ADR-002). `exactOptionalPropertyTypes` is why optional fields are rebuilt
+ * with conditional spreads instead of being assigned `undefined`: the two are
+ * genuinely different here, and a column that is NULL must come back absent.
+ */
+import { Err, Ok, VaultStateError, type Currency, type Money, type Result } from '@porttrack/shared-kernel';
+import type {
+  AcquisitionLot,
+  Asset,
+  AssetClass,
+  CorporateAction,
+  DualRate,
+  ExitTransaction,
+  HandLoan,
+  IncomeEvent,
+  Jurisdiction,
+  Liability,
+  Liquidity,
+  LotAllocation,
+  MfSchemeCategory,
+  RateSource,
+} from '@porttrack/core-domain';
+import { Vault } from './vault.js';
+
+interface AssetRow {
+  readonly asset_id: string;
+  readonly asset_class: string;
+  readonly jurisdiction: string;
+  readonly currency: string;
+  readonly symbol: string | null;
+  readonly isin: string | null;
+  readonly folio_ref: string | null;
+  readonly liquidity: string | null;
+  readonly position_closed: number;
+  readonly scheme_category: string | null;
+  readonly equity_allocation_pct: string | null;
+}
+
+interface LotRow {
+  readonly lot_id: string;
+  readonly asset_id: string;
+  readonly acquisition_date: string;
+  readonly settlement_date: string;
+  readonly quantity: string;
+  readonly remaining_quantity: string;
+  readonly cost_per_unit: string;
+  readonly cost_currency: string;
+  readonly fees: string;
+  readonly stt: string;
+  readonly other_charges: string;
+  readonly valuation_rate: string | null;
+  readonly tax_rate: string | null;
+  readonly rate_source: string | null;
+  readonly tax_rate_source: string | null;
+  readonly fx_is_fallback: number | null;
+  readonly fx_fallback_note: string | null;
+  readonly grandfathered_fmv: string | null;
+  readonly perquisite_value: string | null;
+  readonly is_bonus: number;
+}
+
+interface IncomeRow {
+  readonly event_id: string;
+  readonly asset_id: string;
+  readonly kind: string;
+  readonly date: string;
+  readonly gross_amount: string;
+  readonly tax_withheld: string;
+  readonly net_amount: string;
+  readonly currency: string;
+  readonly withholding_rate_pct: string | null;
+  readonly eligible_for_ftc: number;
+  readonly taxable_inr: string | null;
+}
+
+interface ActionRow {
+  readonly action_id: string;
+  readonly asset_id: string;
+  readonly kind: string;
+  readonly record_date: string;
+  readonly ratio_from: string;
+  readonly ratio_to: string;
+}
+
+interface HandLoanRow {
+  readonly asset_id: string;
+  readonly borrower_ref: string;
+  readonly principal: string;
+  readonly currency: string;
+  readonly interest_rate_pct: string;
+  readonly interest_basis: string;
+  readonly start_date: string;
+}
+
+interface RepaymentRow {
+  readonly asset_id: string;
+  readonly date: string;
+  readonly principal: string;
+  readonly currency: string;
+}
+
+interface LiabilityRow {
+  readonly liability_id: string;
+  readonly kind: string;
+  readonly principal_outstanding: string;
+  readonly currency: string;
+  readonly interest_rate_pct: string;
+  readonly as_of: string;
+}
+
+const money = (amount: string, currency: string): Money => ({
+  amount,
+  currency: currency as Currency,
+});
+
+function requireUnlocked(): Result<void> {
+  return Vault.isUnlocked() ? Ok(undefined) : Err(new VaultStateError('vault is locked'));
+}
+
+/* ------------------------------------------------------------------- read */
+
+function toDualRate(row: LotRow): DualRate | undefined {
+  if (row.valuation_rate === null || row.tax_rate === null) return undefined;
+  return {
+    valuationRate: row.valuation_rate,
+    taxRate: row.tax_rate,
+    valuationRateSource: (row.rate_source ?? 'MANUAL') as RateSource,
+    taxRateSource: (row.tax_rate_source ?? row.rate_source ?? 'MANUAL') as RateSource,
+    isFallback: row.fx_is_fallback === 1,
+    ...(row.fx_fallback_note === null ? {} : { fallbackNote: row.fx_fallback_note }),
+  };
+}
+
+function toLot(row: LotRow): AcquisitionLot {
+  const fx = toDualRate(row);
+  return {
+    lotId: row.lot_id,
+    acquisitionDate: row.acquisition_date,
+    settlementDate: row.settlement_date,
+    quantity: row.quantity,
+    remainingQuantity: row.remaining_quantity,
+    costPerUnit: money(row.cost_per_unit, row.cost_currency),
+    fees: money(row.fees, row.cost_currency),
+    stt: money(row.stt, row.cost_currency),
+    otherCharges: money(row.other_charges, row.cost_currency),
+    ...(fx === undefined ? {} : { fx }),
+    ...(row.grandfathered_fmv === null
+      ? {}
+      : { grandfatheredFmv: money(row.grandfathered_fmv, row.cost_currency) }),
+    ...(row.perquisite_value === null
+      ? {}
+      : { perquisiteValue: money(row.perquisite_value, row.cost_currency) }),
+    ...(row.is_bonus === 1 ? { isBonus: true } : {}),
+  };
+}
+
+function toIncomeEvent(row: IncomeRow): IncomeEvent {
+  return {
+    eventId: row.event_id,
+    assetId: row.asset_id,
+    kind: row.kind as IncomeEvent['kind'],
+    date: row.date,
+    grossAmount: money(row.gross_amount, row.currency),
+    taxWithheld: money(row.tax_withheld, row.currency),
+    netAmount: money(row.net_amount, row.currency),
+    ...(row.withholding_rate_pct === null
+      ? {}
+      : { withholdingRatePct: row.withholding_rate_pct }),
+    eligibleForForeignTaxCredit: row.eligible_for_ftc === 1,
+    ...(row.taxable_inr === null ? {} : { taxableInr: money(row.taxable_inr, 'INR') }),
+  };
+}
+
+function toCorporateAction(row: ActionRow): CorporateAction {
+  return {
+    actionId: row.action_id,
+    assetId: row.asset_id,
+    kind: row.kind as CorporateAction['kind'],
+    recordDate: row.record_date,
+    ratio: { from: row.ratio_from, to: row.ratio_to },
+  };
+}
+
+function toHandLoan(row: HandLoanRow, repayments: readonly RepaymentRow[]): HandLoan {
+  return {
+    assetId: row.asset_id,
+    borrowerRef: row.borrower_ref,
+    principal: money(row.principal, row.currency),
+    interestRatePct: row.interest_rate_pct,
+    interestBasis: row.interest_basis as HandLoan['interestBasis'],
+    startDate: row.start_date,
+    repayments: repayments.map((repayment) => ({
+      date: repayment.date,
+      principal: money(repayment.principal, repayment.currency),
+    })),
+  };
+}
+
+function hydrate(row: AssetRow): Asset {
+  const db = Vault.connection();
+  const lots = db.prepare('SELECT * FROM lots WHERE asset_id = ? ORDER BY acquisition_date, lot_id')
+    .all(row.asset_id) as LotRow[];
+  const income = db.prepare('SELECT * FROM income_events WHERE asset_id = ? ORDER BY date, event_id')
+    .all(row.asset_id) as IncomeRow[];
+  const actions = db
+    .prepare('SELECT * FROM corporate_actions WHERE asset_id = ? ORDER BY record_date, action_id')
+    .all(row.asset_id) as ActionRow[];
+  const loan = db.prepare('SELECT * FROM hand_loans WHERE asset_id = ?').get(row.asset_id) as
+    | HandLoanRow
+    | undefined;
+  const repayments =
+    loan === undefined
+      ? []
+      : (db
+          .prepare('SELECT * FROM hand_loan_repayments WHERE asset_id = ? ORDER BY date')
+          .all(row.asset_id) as RepaymentRow[]);
+
+  return {
+    assetId: row.asset_id,
+    assetClass: row.asset_class as AssetClass,
+    jurisdiction: row.jurisdiction as Jurisdiction,
+    currency: row.currency as Currency,
+    ...(row.symbol === null ? {} : { symbol: row.symbol }),
+    ...(row.isin === null ? {} : { isin: row.isin }),
+    ...(row.folio_ref === null ? {} : { folioRef: row.folio_ref }),
+    lots: lots.map(toLot),
+    incomeEvents: income.map(toIncomeEvent),
+    corporateActions: actions.map(toCorporateAction),
+    ...(row.liquidity === null ? {} : { liquidity: row.liquidity as Liquidity }),
+    ...(row.position_closed === 1 ? { positionClosed: true } : {}),
+    ...(loan === undefined ? {} : { handLoan: toHandLoan(loan, repayments) }),
+    ...(row.scheme_category === null
+      ? {}
+      : { schemeCategory: row.scheme_category as MfSchemeCategory }),
+    ...(row.equity_allocation_pct === null
+      ? {}
+      : { equityAllocationPct: row.equity_allocation_pct }),
+  };
+}
+
+/* ------------------------------------------------------------------ write */
+
+function writeAsset(asset: Asset): void {
+  const db = Vault.connection();
+
+  db.prepare(
+    `INSERT INTO assets
+       (asset_id, asset_class, jurisdiction, currency, symbol, isin, folio_ref, liquidity,
+        position_closed, scheme_category, equity_allocation_pct)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(asset_id) DO UPDATE SET
+       asset_class = excluded.asset_class,
+       jurisdiction = excluded.jurisdiction,
+       currency = excluded.currency,
+       symbol = excluded.symbol,
+       isin = excluded.isin,
+       folio_ref = excluded.folio_ref,
+       liquidity = excluded.liquidity,
+       position_closed = excluded.position_closed,
+       scheme_category = excluded.scheme_category,
+       equity_allocation_pct = excluded.equity_allocation_pct`,
+  ).run(
+    asset.assetId,
+    asset.assetClass,
+    asset.jurisdiction,
+    asset.currency,
+    asset.symbol ?? null,
+    asset.isin ?? null,
+    asset.folioRef ?? null,
+    asset.liquidity ?? null,
+    asset.positionClosed === true ? 1 : 0,
+    asset.schemeCategory ?? null,
+    asset.equityAllocationPct ?? null,
+  );
+
+  // Replace-by-aggregate. Diffing children would leave a superseded lot in place
+  // whenever one is removed, and a stale lot silently inflates the cost basis.
+  for (const table of ['lots', 'income_events', 'corporate_actions', 'hand_loan_repayments']) {
+    db.prepare(`DELETE FROM ${table} WHERE asset_id = ?`).run(asset.assetId);
+  }
+  db.prepare('DELETE FROM hand_loans WHERE asset_id = ?').run(asset.assetId);
+
+  const insertLot = db.prepare(
+    `INSERT INTO lots
+       (lot_id, asset_id, acquisition_date, settlement_date, quantity, remaining_quantity,
+        cost_per_unit, cost_currency, fees, stt, other_charges, valuation_rate, tax_rate,
+        rate_source, tax_rate_source, fx_is_fallback, fx_fallback_note, grandfathered_fmv,
+        perquisite_value, is_bonus)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const lot of asset.lots) {
+    insertLot.run(
+      lot.lotId,
+      asset.assetId,
+      lot.acquisitionDate,
+      lot.settlementDate,
+      lot.quantity,
+      lot.remainingQuantity,
+      lot.costPerUnit.amount,
+      lot.costPerUnit.currency,
+      lot.fees.amount,
+      lot.stt.amount,
+      lot.otherCharges.amount,
+      lot.fx?.valuationRate ?? null,
+      lot.fx?.taxRate ?? null,
+      lot.fx?.valuationRateSource ?? null,
+      lot.fx?.taxRateSource ?? null,
+      lot.fx === undefined ? null : lot.fx.isFallback ? 1 : 0,
+      lot.fx?.fallbackNote ?? null,
+      lot.grandfatheredFmv?.amount ?? null,
+      lot.perquisiteValue?.amount ?? null,
+      lot.isBonus === true ? 1 : 0,
+    );
+  }
+
+  const insertIncome = db.prepare(
+    `INSERT INTO income_events
+       (event_id, asset_id, kind, date, gross_amount, tax_withheld, net_amount, currency,
+        withholding_rate_pct, eligible_for_ftc, taxable_inr)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  for (const event of asset.incomeEvents) {
+    insertIncome.run(
+      event.eventId,
+      asset.assetId,
+      event.kind,
+      event.date,
+      event.grossAmount.amount,
+      event.taxWithheld.amount,
+      event.netAmount.amount,
+      event.grossAmount.currency,
+      event.withholdingRatePct ?? null,
+      event.eligibleForForeignTaxCredit ? 1 : 0,
+      event.taxableInr?.amount ?? null,
+    );
+  }
+
+  const insertAction = db.prepare(
+    `INSERT INTO corporate_actions (action_id, asset_id, kind, record_date, ratio_from, ratio_to)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  );
+  for (const action of asset.corporateActions) {
+    insertAction.run(
+      action.actionId,
+      asset.assetId,
+      action.kind,
+      action.recordDate,
+      action.ratio.from,
+      action.ratio.to,
+    );
+  }
+
+  if (asset.handLoan !== undefined) {
+    const loan = asset.handLoan;
+    db.prepare(
+      `INSERT INTO hand_loans
+         (asset_id, borrower_ref, principal, currency, interest_rate_pct, interest_basis, start_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      asset.assetId,
+      loan.borrowerRef,
+      loan.principal.amount,
+      loan.principal.currency,
+      loan.interestRatePct,
+      loan.interestBasis,
+      loan.startDate,
+    );
+
+    const insertRepayment = db.prepare(
+      `INSERT INTO hand_loan_repayments (repayment_id, asset_id, date, principal, currency)
+       VALUES (?, ?, ?, ?, ?)`,
+    );
+    loan.repayments.forEach((repayment, index) => {
+      insertRepayment.run(
+        `${asset.assetId}_rep_${String(index).padStart(4, '0')}`,
+        asset.assetId,
+        repayment.date,
+        repayment.principal.amount,
+        repayment.principal.currency,
+      );
+    });
+  }
+}
+
+export const AssetRepository = {
+  save(asset: Asset): Promise<Result<void>> {
+    const guard = requireUnlocked();
+    if (!guard.ok) return Promise.resolve(guard);
+    Vault.connection().transaction(() => { writeAsset(asset); })();
+    return Promise.resolve(Ok(undefined));
+  },
+
+  /** One transaction for the whole batch: an import is all-or-nothing (US-4.1). */
+  saveAll(assets: readonly Asset[]): Promise<Result<void>> {
+    const guard = requireUnlocked();
+    if (!guard.ok) return Promise.resolve(guard);
+    Vault.connection().transaction(() => {
+      for (const asset of assets) writeAsset(asset);
+    })();
+    return Promise.resolve(Ok(undefined));
+  },
+
+  findById(assetId: string): Promise<Asset | undefined> {
+    if (!Vault.isUnlocked()) return Promise.resolve(undefined);
+    const row = Vault.connection().prepare('SELECT * FROM assets WHERE asset_id = ?').get(assetId) as
+      | AssetRow
+      | undefined;
+    return Promise.resolve(row === undefined ? undefined : hydrate(row));
+  },
+
+  all(): Promise<readonly Asset[]> {
+    // A locked vault has no assets to report. Throwing here would make every
+    // read path responsible for the lock state; returning empty keeps "locked"
+    // and "empty" distinguishable at the one layer that can tell them apart.
+    if (!Vault.isUnlocked()) return Promise.resolve([]);
+    const rows = Vault.connection()
+      .prepare('SELECT * FROM assets ORDER BY asset_class, symbol, asset_id')
+      .all() as AssetRow[];
+    return Promise.resolve(rows.map(hydrate));
+  },
+
+  deleteAll(): Promise<Result<void>> {
+    const guard = requireUnlocked();
+    if (!guard.ok) return Promise.resolve(guard);
+    Vault.connection().exec('DELETE FROM assets');
+    return Promise.resolve(Ok(undefined));
+  },
+};
+
+interface ExitRow {
+  readonly txn_id: string;
+  readonly asset_id: string;
+  readonly exit_date: string;
+  readonly acquisition_date: string | null;
+  readonly quantity: string;
+  readonly price_per_unit: string;
+  readonly currency: string;
+  readonly fees: string;
+  readonly stt: string;
+  readonly allocations: string;
+  readonly valuation_rate: string | null;
+  readonly tax_rate: string | null;
+  readonly rate_source: string | null;
+  readonly tax_rate_source: string | null;
+  readonly fx_is_fallback: number | null;
+  readonly fx_fallback_note: string | null;
+  readonly valuation_inr: string | null;
+  readonly taxable_inr: string | null;
+}
+
+function toExit(row: ExitRow): ExitTransaction {
+  const fx: DualRate | undefined =
+    row.valuation_rate === null || row.tax_rate === null
+      ? undefined
+      : {
+          valuationRate: row.valuation_rate,
+          taxRate: row.tax_rate,
+          valuationRateSource: (row.rate_source ?? 'MANUAL') as RateSource,
+          taxRateSource: (row.tax_rate_source ?? row.rate_source ?? 'MANUAL') as RateSource,
+          isFallback: row.fx_is_fallback === 1,
+          ...(row.fx_fallback_note === null ? {} : { fallbackNote: row.fx_fallback_note }),
+        };
+
+  return {
+    txnId: row.txn_id,
+    assetId: row.asset_id,
+    exitDate: row.exit_date,
+    ...(row.acquisition_date === null ? {} : { acquisitionDate: row.acquisition_date }),
+    quantity: row.quantity,
+    pricePerUnit: money(row.price_per_unit, row.currency),
+    fees: money(row.fees, row.currency),
+    stt: money(row.stt, row.currency),
+    allocations: JSON.parse(row.allocations) as LotAllocation[],
+    ...(fx === undefined ? {} : { fx }),
+    ...(row.valuation_inr === null ? {} : { valuationInr: money(row.valuation_inr, 'INR') }),
+    ...(row.taxable_inr === null ? {} : { taxableInr: money(row.taxable_inr, 'INR') }),
+  };
+}
+
+/**
+ * Disposals (US-1.3, US-2.x).
+ *
+ * Kept separate from the Asset aggregate on purpose: `AssetRepository.save`
+ * replaces an asset's children wholesale, and an exit must NOT be erased by a
+ * later re-save of the holding it came from.
+ */
+export const ExitRepository = {
+  saveAll(exits: readonly ExitTransaction[]): Promise<Result<void>> {
+    const guard = requireUnlocked();
+    if (!guard.ok) return Promise.resolve(guard);
+
+    const db = Vault.connection();
+    const insert = db.prepare(
+      `INSERT INTO exits
+         (txn_id, asset_id, exit_date, acquisition_date, quantity, price_per_unit, currency,
+          fees, stt, allocations, valuation_rate, tax_rate, rate_source, tax_rate_source,
+          fx_is_fallback, fx_fallback_note, valuation_inr, taxable_inr)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(txn_id) DO NOTHING`,
+    );
+
+    db.transaction(() => {
+      for (const exit of exits) {
+        insert.run(
+          exit.txnId,
+          exit.assetId,
+          exit.exitDate,
+          exit.acquisitionDate ?? null,
+          exit.quantity,
+          exit.pricePerUnit.amount,
+          exit.pricePerUnit.currency,
+          exit.fees.amount,
+          exit.stt.amount,
+          JSON.stringify(exit.allocations),
+          exit.fx?.valuationRate ?? null,
+          exit.fx?.taxRate ?? null,
+          exit.fx?.valuationRateSource ?? null,
+          exit.fx?.taxRateSource ?? null,
+          exit.fx === undefined ? null : exit.fx.isFallback ? 1 : 0,
+          exit.fx?.fallbackNote ?? null,
+          exit.valuationInr?.amount ?? null,
+          exit.taxableInr?.amount ?? null,
+        );
+      }
+    })();
+    return Promise.resolve(Ok(undefined));
+  },
+
+  all(): Promise<readonly ExitTransaction[]> {
+    if (!Vault.isUnlocked()) return Promise.resolve([]);
+    const rows = Vault.connection()
+      .prepare('SELECT * FROM exits ORDER BY exit_date, txn_id')
+      .all() as ExitRow[];
+    return Promise.resolve(rows.map(toExit));
+  },
+};
+
+/**
+ * Small singular application state, inside the encrypted vault.
+ *
+ * Values are opaque JSON to this layer on purpose: it stores and returns them
+ * without interpretation, so adding a setting never requires a migration.
+ */
+export const SettingsRepository = {
+  get(key: string): Promise<string | undefined> {
+    if (!Vault.isUnlocked()) return Promise.resolve(undefined);
+    const row = Vault.connection().prepare('SELECT value FROM settings WHERE key = ?').get(key) as
+      | { value: string }
+      | undefined;
+    return Promise.resolve(row?.value);
+  },
+
+  set(key: string, value: string, updatedAt: string): Promise<Result<void>> {
+    const guard = requireUnlocked();
+    if (!guard.ok) return Promise.resolve(guard);
+    Vault.connection()
+      .prepare(
+        `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      )
+      .run(key, value, updatedAt);
+    return Promise.resolve(Ok(undefined));
+  },
+
+  delete(key: string): Promise<Result<void>> {
+    const guard = requireUnlocked();
+    if (!guard.ok) return Promise.resolve(guard);
+    Vault.connection().prepare('DELETE FROM settings WHERE key = ?').run(key);
+    return Promise.resolve(Ok(undefined));
+  },
+};
+
+export const LiabilityRepository = {
+  save(liability: Liability): Promise<Result<void>> {
+    const guard = requireUnlocked();
+    if (!guard.ok) return Promise.resolve(guard);
+    Vault.connection()
+      .prepare(
+        `INSERT INTO liabilities
+           (liability_id, kind, principal_outstanding, currency, interest_rate_pct, as_of)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(liability_id) DO UPDATE SET
+           kind = excluded.kind,
+           principal_outstanding = excluded.principal_outstanding,
+           currency = excluded.currency,
+           interest_rate_pct = excluded.interest_rate_pct,
+           as_of = excluded.as_of`,
+      )
+      .run(
+        liability.liabilityId,
+        liability.kind,
+        liability.principalOutstanding.amount,
+        liability.principalOutstanding.currency,
+        liability.interestRatePct,
+        liability.asOf,
+      );
+    return Promise.resolve(Ok(undefined));
+  },
+
+  all(): Promise<readonly Liability[]> {
+    if (!Vault.isUnlocked()) return Promise.resolve([]);
+    const rows = Vault.connection()
+      .prepare('SELECT * FROM liabilities ORDER BY liability_id')
+      .all() as LiabilityRow[];
+    return Promise.resolve(
+      rows.map((row) => ({
+        liabilityId: row.liability_id,
+        kind: row.kind as Liability['kind'],
+        principalOutstanding: money(row.principal_outstanding, row.currency),
+        interestRatePct: row.interest_rate_pct,
+        asOf: row.as_of,
+      })),
+    );
+  },
+};

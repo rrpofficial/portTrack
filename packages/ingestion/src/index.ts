@@ -9,16 +9,29 @@ import {
   parseVested,
   parseZerodhaTradebook,
 } from './brokers.js';
-import { generateTemplate, listTemplates, parseTemplate, validateHeaders } from './templates.js';
+import {
+  detectTemplate,
+  generateTemplate,
+  listTemplates,
+  parseTemplate,
+  templateDefinitions,
+  validateHeaders,
+} from './templates.js';
 import { naturalKey, partition } from './duplicates.js';
 import { ingest } from './pipeline.js';
+import { projectToLedger } from './ledger.js';
 
 export * from './types.js';
+export type { LedgerProjection, UnappliedTransaction } from './ledger.js';
 export { TEMPLATES, type TemplateDefinition } from './templates.js';
 export type { ParseOutcome } from './brokers.js';
 
 /** US-4.1 — parse → validate → stage → reconcile → commit. */
 export const Pipeline = { ingest };
+
+/** US-4.1 — parsed rows become holdings, lots and income events. */
+export const LedgerProjector = { project: projectToLedger };
+export { ledgerNaturalKeys } from './ledger.js';
 
 /** US-4.2 — CAMS / KFintech consolidated account statements. */
 export const CamsCasParser = { parse: parseCams };
@@ -53,7 +66,10 @@ export const EtradeParser = {
 export const TemplateParser = { parse: parseTemplate };
 export const TemplateRegistry = {
   list: listTemplates,
+  /** Full definitions — name, columns, asset class and guidance — for the UI. */
+  definitions: templateDefinitions,
   generate: generateTemplate,
+  detect: detectTemplate,
   validateHeaders,
 };
 

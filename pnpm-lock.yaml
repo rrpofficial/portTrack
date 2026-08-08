@@ -161,6 +161,9 @@ importers:
 
   packages/compliance:
     dependencies:
+      '@porttrack/core-domain':
+        specifier: workspace:*
+        version: link:../core-domain
       '@porttrack/shared-kernel':
         specifier: workspace:*
         version: link:../shared-kernel
@@ -203,6 +206,9 @@ importers:
 
   packages/ingestion:
     dependencies:
+      '@porttrack/core-domain':
+        specifier: workspace:*
+        version: link:../core-domain
       '@porttrack/shared-kernel':
         specifier: workspace:*
         version: link:../shared-kernel

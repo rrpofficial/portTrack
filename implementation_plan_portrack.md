@@ -1924,7 +1924,7 @@ Status legend: `TODO` · `TESTS_RED` (acceptance tests written and failing) · `
 | US-7.3 | Full masking pipeline | 7 | FR-7.1 | P0 | 5 | M2 (pulled fwd) | 7.2 | `packages/pii-masker/test/masking-pipeline.spec.ts` | DONE |
 | US-7.4 | Fail-closed egress guard | 7 | FR-7.1 | P0 | 5 | M7 | 7.3 | `packages/pii-masker/test/egress-guard.spec.ts` | DONE |
 | US-7.5 | Deterministic pseudonymisation | 7 | FR-7.2 | P1 | 5 | M7 | 7.3 | `packages/pii-masker/test/pseudonymiser.spec.ts` | DONE |
-| US-8.5 | Application shell UI | 8 | §3 | P0 | 13 | M8 | 8.3, 1.15 | `tests/e2e/app-shell.spec.ts` | DONE |
+| US-8.5 | Application shell UI | 8 | §3 | P0 | 13 | M11 | 8.3, 1.15 | `tests/e2e/app-shell.spec.ts` | DONE |
 | US-8.6 | Headless CLI runner | 8 | §4.3 | P1 | 5 | M8 | 8.3 | `tests/functional/cli/commands.spec.ts` | DONE |
 | US-8.7 | Performance budget harness | 8 | NFR-2 | P0 | 5 | M8 | 1.15, 3.5 | `tests/functional/perf/budgets.bench.ts` | DONE |
 | US-8.8 | Backup / restore / export | 8 | NFR-1 | P1 | 5 | M8 | 8.2 | `tests/functional/platform/backup-restore.spec.ts` | DONE |
@@ -2338,14 +2338,208 @@ services. Verified against the running stack, not asserted from the compose file
 container suite; `pnpm bench` exists to show headroom rather than to gate the build. Current margin
 is roughly 300× on valuation and 600× on snapshot delta, so the budgets are not close to binding.
 
+### M11 result (2026-08-04) — the six sections behind the nav
+
+Raised by the user: *"Nothing happens when I click on the links on the UI."* Correct, and the cause
+was worse than the symptom.
+
+**What was actually wrong.** `App.tsx` set a `section` state that the render never read. The nav
+moved a highlight and changed nothing else, because the six non-Dashboard sections had never been
+built. US-8.5 was marked DONE against an acceptance criterion — *"the UI exposes Dashboard, Ledger,
+Import, …"* — that seven dead anchors satisfy to the letter. **`tests/e2e/app-shell.spec.ts` would
+have caught it on line 57 and was never run.** The one suite that mattered was the one suite skipped.
+
+**Three further gaps found while building, none of them visible from the UI:**
+
+1. **`AssetRepository` and `LiabilityRepository` were `notImplemented` stubs**, and `ports.assets()`
+   returned `[]` in production. The shipped application valued a portfolio it never read — net worth
+   was ₹0 regardless of what had been imported. Every test passed because each supplied its own
+   fixture. US-8.3 covered migrations, which were real; the repositories were not.
+2. **`ImportStatementUC` parsed a file and discarded the result.** It returned `created: 65` and
+   wrote nothing. A report is not evidence of a commit.
+3. **`GenerateComplianceUC` was `notImplemented`**, so M10's compliance package was unreachable from
+   the API despite being tested and green.
+
+**A real correctness bug surfaced from the new test, not from review.** Disposals left no stored
+trace — lots recorded that quantity had gone, but not that a SELL caused it. Re-importing an
+overlapping statement therefore re-applied every sell and depleted the holding twice, understating
+the position and overstating realised gains. Lot counts stayed identical throughout, which is why an
+obvious "did it duplicate?" check does not notice. Fixed by migration 3: exits are now first-class
+records, kept outside the Asset aggregate so a later re-save of the holding cannot erase them.
+
+**Schema.** Migrations 2–4: income events, corporate actions and hand-loan repayments (an Asset
+previously round-tripped lossily, silently dropping dividends); exits; and a settings table so the
+income profile behind a tax figure survives a restart instead of reverting to "zero income".
+
+**Deliberately NOT faked.** `scheduleFaA3` returns an error rather than rows. Table A3 needs the peak
+value over the calendar year, which requires a daily price and rate series this build does not
+record. Rows computed from the closing value alone would understate the peak, and under the Black
+Money Act an understated foreign disclosure is treated far more harshly than a domestic one. The
+Compliance view shows the reason.
+
+**One domain rule was right and the UI was wrong.** A custom snapshot is taken as of the END of its
+date, so "snapshot today" asks for a moment that has not happened; `assertNotFuture` refused it. The
+fix was in the view — default to the latest fully-elapsed day — not in the invariant.
+
+```
+unit + functional   575 passing   (was 552; +23 for repositories, import→ledger, exits)
+container (Docker)   38 passing
+E2E (Playwright)     17 passing   ← first run ever
+typecheck clean · new code lint-clean
+```
+
+**The E2E suite now asserts what a section RENDERS**, never that a link exists — the failure mode
+that produced this milestone cannot recur silently. Two things it caught: a helper that raced React's
+mount (a non-retrying `isVisible()` answered "false" mid-hydration and skipped the unlock, surfacing
+far from its cause), and the same-day snapshot rejection above.
+
+**Also fixed:** `@porttrack/core-domain` was added as a dependency of `ingestion` and `compliance`
+without running `pnpm install`, so the workspace links did not exist and ESLint resolved the whole
+package as `any` — 108 spurious errors from one missing symlink.
+
+**Pre-existing and untouched:** 16 lint errors in `tests/test-kit`, `tests/manual` and three
+functional specs, all present before this work. The README's "lint clean" claim is stale.
+
+### M11b — the CSV template path (2026-08-04)
+
+Raised by the user: *"This application does not provide any sample portTrack csv template."* True,
+and again the missing artefact was the smaller half of the problem.
+
+**The templates existed only as unreachable code.** `TEMPLATES` defined six of them and
+`generateTemplate` produced a header row, but no route, no view and no file exposed any of it. US-4.6
+was DONE on the strength of that.
+
+**And the parser could not have used them anyway.** `parseTemplate` read every template through one
+generic path: guess a column ending in `_date`, guess a column containing `amount`/`price`/`balance`,
+emit `BUY` with quantity 1, discard which template it had read. A hand loan and a bank balance came
+out byte-identical, and — after M11 made the projection refuse to guess an asset class — every
+template row landed in `unapplied`. **Manual entry could not create a single asset.**
+
+The test that should have caught it is titled *"parses borrower details, principal, interest rate and
+start date"* and asserted `rows.length > 0`. The third instance in this project of a test written to
+the letter of a story title rather than its intent.
+
+**Fixed:** templates now declare their asset class; the parser identifies the template from its
+header (exact column-set match, so an extra column is a mismatch rather than a silent ignore) and
+maps each to its real fields — loan terms for hand loans, stamp duty and registration into the cost
+of acquisition for property, `buy`/`sell` for the generic broker. Row errors carry the real column
+name and expected format. `borrower_name` is hashed at the parser boundary: a lender's private
+counterparty never consented to being in a dataset, and the raw name now exists only in the vault.
+
+**Exposed three ways**, because a template nobody can find is the same as no template: `GET
+/api/templates` and `/api/templates/:name` (deliberately not vault-gated — you need the blank file
+before you have anything to put in it), a download table in the Import view, and committed files in
+`templates/` generated by `scripts/emit-templates.mts` from the parser's own column definitions, so
+the header a user fills in cannot drift from the header the importer matches.
+
+```
+unit + functional   591 passing   (was 575; +16 for templates)
+E2E (Playwright)     20 passing   (was 17)
+container (Docker)   38 passing
+```
+
+Two existing tests failed on this change and both were correct to fail: one asserted the first line
+of a generated template contains a comma (it is now a `#` comment), the other asserted that a cash
+template comes back unapplied — the behaviour being fixed.
+
+### M11c — year pickers, and an assessment-year bug behind them (2026-08-04)
+
+Raised by the user: the FY / CY / AY dropdowns should offer the current period. They were hardcoded
+`['2025-26', '2024-25']` and, for calendar years, `currentYear - 1 … - 3` — so the current period was
+absent by construction and the lists went stale every April with no failing test to say so.
+
+**The request surfaced a filing-level bug.** Two places passed the financial year straight through as
+the assessment year: `profileFor` (`assessmentYear: fy`) and `GenerateComplianceUC.scheduleAl`.
+**AY is FY + 1** — income earned in FY 2025-26 is assessed in AY 2026-27 — so every income profile
+and every Schedule AL was labelled with the wrong year. `FyCalendar.assessmentYearOf` already existed
+and was correct; nothing called it. A test now asserts no offered year ever has `assessmentYear ===
+financialYear`.
+
+**Periods are derived on the SERVER** (`GET /api/reference/periods`), not in the browser. A client
+one timezone west decides it is still 31 March while the server has moved into the next financial
+year; the picker would then disagree with the engine computing the tax, and neither would look wrong
+alone. The clock is the injected one, so the whole thing is testable at any date.
+
+**Offering a period and defaulting to it are separate decisions**, and conflating them was the first
+attempt's mistake — defaulting to the current FY made the Tax screen open on FY 2026-27, which has no
+rule set, so it greeted every user with an error they had not caused. Now:
+
+- the current FY is always **offered** and labelled `· current`, with `· no rates yet` where no rule
+  set exists;
+- `defaultFinancialYear` is the most recent year that can actually be computed, and self-corrects to
+  the current year the moment its rates are added — no code change;
+- the current calendar year is **offered** and flagged *"still running"*, while
+  `defaultCalendarYear` is the last complete one, because Schedule FA reports a 31-December position
+  a running year has not reached.
+
+Each option now reads `FY 2025-26 · AY 2026-27 · current`, so the FY→AY relationship is visible at
+the point of choosing rather than implied.
+
+```
+unit + functional   607 passing   (was 591; +16 for periods)
+E2E (Playwright)     25 passing   (was 20)
+container (Docker)   38 passing
+```
+
+Caught by the new E2E: defaulting to a year with no rates broke the advance-tax journey, which is how
+the offer/default distinction was found. One test also had to be tightened — matching `/2026-27/`
+against the option list hit both `FY 2026-27` and the `AY 2026-27` of the row below it.
+
+### M11d — the unlock screen hang (2026-08-08)
+
+Raised by the user: the passphrase prompt hangs in Chrome at times. It did, and the mechanism had two
+halves that fed each other.
+
+**Measured against the running container, before the fix:**
+
+```
+ten unlock requests      0.35s → 0.70s → 1.05s → … → 3.50s    exactly serialized
+health probe mid-unlock  0.310s        versus        0.001s idle
+```
+
+Argon2id at the OWASP baseline (m=19 MiB, t=2) occupies a core for ~350 ms — correct, and deliberately
+expensive. But it ran **synchronously on Node's only thread**, so one unlock froze the entire API for
+its duration, health checks included, and concurrent unlocks queued instead of overlapping.
+
+Meanwhile the unlock form had **no busy state at all**: the button stayed enabled, nothing on screen
+changed, and `submitUnlock` had no re-entry guard. So the honest user response to "nothing happened"
+— click again — queued another 350 ms block per click. Ten impatient clicks bought 3.5 seconds of a
+genuinely frozen application. `fetch` had no timeout either, so a request the server never answered
+left the promise pending forever with the UI showing nothing.
+
+**Fixed on both sides:**
+
+- `deriveKeyAsync` runs Argon2id in a worker thread (`kdf-worker.mjs`, a real file on disk because a
+  worker entry point cannot be bundled; `build.mjs` copies it into the image, and a missing worker
+  degrades to the synchronous path rather than failing to open a vault).
+- The unlock button disables itself, says *"Unlocking…"*, and explains **why** it is slow — a
+  deliberate work factor that looks like a stall is indistinguishable from a broken app. The same
+  flag is the re-entry guard.
+- Every request now carries a 30-second `AbortController` budget, and a timeout is reported
+  distinctly from "the backend is down" — which would have been both wrong and alarming.
+
+**After:**
+
+```
+ten unlock requests      worst case 3.50s → 1.08s
+health probe mid-unlock  0.310s → 0.00076s          ~400× more responsive
+E2E suite wall clock     26s → 18s
+```
+
+The functional tests assert the *property* — timers still fire during derivation, four concurrent
+derivations cost well under four times one — never a wall-clock budget, so they will not flake on a
+loaded runner. One equivalence test is load-bearing: the worker must derive a **byte-identical** key
+to the synchronous path, or every vault already on disk would be locked out of its own data.
+
+**Also found while investigating:** a browser tab left open on the unlock screen re-submits as soon as
+the API comes back, which is why a wiped `data/` directory kept reappearing with a vault in it.
+
 ### Test inventory
 
 | Suite | Location | Tests | State |
 |---|---|---|---|
-| Unit (domain packages) | `packages/*/test/` | 396 | 232 green (shared-kernel, core-domain, persistence, platform, most of fx-itbr and pii-masker) |
-| Functional (through `app-services`) | `tests/functional/` | 69 | 18 green (architecture guards) |
-| Container (FR-8) | `tests/container/` | 37 | red — awaits `compose.yaml` |
-| E2E (Playwright) | `tests/e2e/` | 11 | red — awaits the UI |
-| Benchmarks (NFR-2) | `tests/functional/perf/` | 2 | red |
-
-Tracker rows move `TESTS_RED → WIP → REVIEW → DONE` per story from here.
+| Unit (domain packages) | `packages/*/test/` | 412 | green |
+| Functional (through `app-services`) | `tests/functional/` | 201 | green |
+| Container (FR-8) | `tests/container/` | 38 | green |
+| E2E (Playwright) | `tests/e2e/` | 28 | green |
+| Benchmarks (NFR-2) | `tests/functional/perf/` | 2 | green |

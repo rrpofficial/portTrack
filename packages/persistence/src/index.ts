@@ -3,13 +3,13 @@
  * page-level AES-256-CBC + HMAC-SHA512 whole-file encryption (ADR-015),
  * forward-only migrations, repositories.
  */
-import { notImplemented, type Result } from '@porttrack/shared-kernel';
-import type { Asset, Liability } from '@porttrack/core-domain';
+import type { Result } from '@porttrack/shared-kernel';
+import type { Asset, ExitTransaction, Liability } from '@porttrack/core-domain';
 import type { Snapshot } from '@porttrack/snapshot';
 import { Vault } from './vault.js';
 import { currentVersion, runMigrations } from './migrations.js';
-import { deriveKey, zeroise } from './crypto.js';
-export { SnapshotRepository } from './snapshot-repository.js';
+import { deriveKey, deriveKeyAsync, zeroise } from './crypto.js';
+export { SnapshotRepository, type SnapshotSummary } from './snapshot-repository.js';
 export { Backup } from './backup.js';
 
 export { Vault } from './vault.js';
@@ -20,6 +20,9 @@ export { MIGRATIONS } from './migrations.js';
 export const CryptoEnvelope = {
   deriveKey: (passphrase: string, salt: Uint8Array): Promise<Uint8Array> =>
     Promise.resolve(deriveKey(passphrase, salt)),
+  /** Off the event loop. What a server must use — see crypto.ts. */
+  deriveKeyAsync: (passphrase: string, salt: Uint8Array): Promise<Uint8Array> =>
+    deriveKeyAsync(passphrase, salt),
   zeroise,
 };
 
@@ -29,12 +32,15 @@ export const MigrationRunner = {
   currentVersion: (): Promise<number> => Promise.resolve(currentVersion(Vault.connection())),
 };
 
-/* ------------------------------------------------- not yet implemented (M2) */
+/* ---------------------------------------------------------- repositories */
 
 export interface AssetRepositoryOps {
   save(asset: Asset): Promise<Result<void>>;
+  /** One transaction for the batch, so a failed import commits nothing. */
+  saveAll(assets: readonly Asset[]): Promise<Result<void>>;
   findById(assetId: string): Promise<Asset | undefined>;
   all(): Promise<readonly Asset[]>;
+  deleteAll(): Promise<Result<void>>;
 }
 
 export interface LiabilityRepositoryOps {
@@ -55,12 +61,14 @@ export interface BackupOps {
   restore(source: string, destination: string): Promise<Result<void>>;
 }
 
-export const AssetRepository: AssetRepositoryOps = {
-  save: () => notImplemented('US-8.3', 'AssetRepository.save'),
-  findById: () => notImplemented('US-8.3', 'AssetRepository.findById'),
-  all: () => notImplemented('US-8.3', 'AssetRepository.all'),
-};
-export const LiabilityRepository: LiabilityRepositoryOps = {
-  save: () => notImplemented('US-8.3', 'LiabilityRepository.save'),
-  all: () => notImplemented('US-8.3', 'LiabilityRepository.all'),
-};
+export interface ExitRepositoryOps {
+  saveAll(exits: readonly ExitTransaction[]): Promise<Result<void>>;
+  all(): Promise<readonly ExitTransaction[]>;
+}
+
+export {
+  AssetRepository,
+  ExitRepository,
+  LiabilityRepository,
+  SettingsRepository,
+} from './asset-repository.js';

@@ -1,0 +1,8 @@
+# portTrack template: Custom_ChitFunds
+# Chit funds and family savings schemes
+# Recorded as total_months instalments at monthly_instalment, i.e. the TOTAL COMMITTED
+# amount at cost. A chit fund's realisable value depends on auction history this template
+# does not capture, so treat the figure as commitment, not market value.
+#
+# Lines beginning with # are ignored on import. Keep the header row exactly as it is.
+scheme_name,start_date,monthly_instalment,total_months,currency

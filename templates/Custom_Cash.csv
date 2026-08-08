@@ -1,0 +1,7 @@
+# portTrack template: Custom_Cash
+# Cash in hand and bank balances
+# One row per account. account_label is your own reference, e.g. "Salary account" — do not
+# enter the account number.
+#
+# Lines beginning with # are ignored on import. Keep the header row exactly as it is.
+account_label,as_of_date,balance,currency

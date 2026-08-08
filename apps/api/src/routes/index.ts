@@ -15,10 +15,18 @@ import {
   AuditUC,
   CompareSnapshotsUC,
   ComputeAdvanceTaxUC,
+  GenerateComplianceUC,
   GenerateSnapshotUC,
   ImportStatementUC,
+  LedgerUC,
+  ListSnapshotsUC,
+  ReferenceUC,
+  TemplateUC,
   ValuePortfolioUC,
   VaultUC,
+  hasIncomeProfile,
+  incomeProfileOf,
+  saveIncomeProfile,
 } from '@porttrack/app-services';
 import { PiiVerifier } from '@porttrack/pii-masker';
 
@@ -70,7 +78,22 @@ export function registerRoutes(app: FastifyInstance): void {
       : reply.code(409).send(failure(result.error.code, result.error.message));
   });
 
+  /* ------------------------------------------------------------- ledger */
+
+  app.get('/api/ledger/assets', async (_request, reply) => {
+    const [assets, liabilities, exits] = await Promise.all([
+      LedgerUC.assets(),
+      LedgerUC.liabilities(),
+      LedgerUC.exits(),
+    ]);
+    return reply.send({ assets, liabilities, exits });
+  });
+
   /* ---------------------------------------------------------- snapshots */
+
+  app.get('/api/snapshots', async (_request, reply) =>
+    reply.send({ snapshots: await ListSnapshotsUC.execute() }),
+  );
 
   app.post('/api/snapshots', async (request, reply) => {
     const asOf = (request.body as { asOf?: string } | undefined)?.asOf;
@@ -95,6 +118,35 @@ export function registerRoutes(app: FastifyInstance): void {
         // snapshot simply does not exist. Returning 404 would be ambiguous with
         // an unregistered route, for clients and for our own tests alike.
         reply.code(409).send(failure(result.error.code, result.error.message));
+  });
+
+  /* ---------------------------------------------------------- reference */
+
+  // Ungated like the templates: which financial year it is does not depend on
+  // anyone's vault, and the UI needs it to render its year pickers before unlock.
+  app.get('/api/reference/periods', (_request, reply) => reply.send(ReferenceUC.periods()));
+
+  /* ---------------------------------------------------------- templates */
+
+  // Not gated on the vault: a user needs the blank template BEFORE they have
+  // anything to put in it, and these files contain no data of theirs.
+  app.get('/api/templates', (_request, reply) =>
+    reply.send({ templates: TemplateUC.list() }),
+  );
+
+  app.get<{ Params: { name: string } }>('/api/templates/:name', (request, reply) => {
+    // Both `Custom_Cash` and `Custom_Cash.csv` resolve: the download link uses
+    // the bare name, but a user who types or shares the URL will include the
+    // extension they saw on the file.
+    const name = request.params.name.replace(/\.csv$/i, '');
+    const csv = TemplateUC.generate(name);
+    if (csv.length === 0) {
+      return reply.code(404).send(failure('UNKNOWN_TEMPLATE', 'no such template'));
+    }
+    return reply
+      .header('content-type', 'text/csv; charset=utf-8')
+      .header('content-disposition', `attachment; filename="${name}.csv"`)
+      .send(csv);
   });
 
   /* ------------------------------------------------------------ imports */
@@ -129,9 +181,63 @@ export function registerRoutes(app: FastifyInstance): void {
       : reply.code(409).send(failure(result.error.code, result.error.message));
   });
 
+  app.get('/api/tax/regimes', async (request, reply) => {
+    const fy = (request.query as { fy?: string }).fy ?? '2025-26';
+    const result = await ComputeAdvanceTaxUC.compareRegimes(fy);
+    return result.ok
+      ? reply.send({ ...result.value, hasIncomeProfile: hasIncomeProfile() })
+      : reply.code(409).send(failure(result.error.code, result.error.message));
+  });
+
+  app.get('/api/tax/income-profile', (_request, reply) =>
+    // `present` is reported separately: a nil tax figure computed from a missing
+    // Form 16 must not read as a computed answer of zero.
+    reply.send({ present: hasIncomeProfile(), profile: incomeProfileOf() ?? null }),
+  );
+
+  app.post('/api/tax/income-profile', async (request, reply) => {
+    const body = request.body as { profile?: unknown } | undefined;
+    if (body?.profile === undefined || body.profile === null) {
+      return reply.code(422).send(failure('INVALID_BODY', 'an income profile is required'));
+    }
+    const saved = await saveIncomeProfile(body.profile as Parameters<typeof saveIncomeProfile>[0]);
+    return saved.ok
+      ? reply.send({ present: true })
+      : reply.code(409).send(failure(saved.error.code, saved.error.message));
+  });
+
+  /* --------------------------------------------------------- compliance */
+
+  app.get('/api/compliance/schedule-fa', async (request, reply) => {
+    const query = request.query as { cy?: string };
+    // CALENDAR year — Schedule FA runs 1 Jan to 31 Dec, unlike everything else.
+    const calendarYear = Number(query.cy ?? new Date().getUTCFullYear() - 1);
+    const [a3, d] = await Promise.all([
+      GenerateComplianceUC.scheduleFaA3(calendarYear),
+      GenerateComplianceUC.scheduleFaD(calendarYear),
+    ]);
+    return reply.send({
+      calendarYear,
+      tableA3: a3.ok ? a3.value : null,
+      tableA3Error: a3.ok ? null : { code: a3.error.code, message: a3.error.message },
+      tableD: d.ok ? d.value : null,
+      tableDError: d.ok ? null : { code: d.error.code, message: d.error.message },
+    });
+  });
+
+  app.get('/api/compliance/schedule-al', async (request, reply) => {
+    const fy = (request.query as { fy?: string }).fy ?? '2025-26';
+    const result = await GenerateComplianceUC.scheduleAl(fy);
+    return result.ok
+      ? reply.send(result.value)
+      : reply.code(409).send(failure(result.error.code, result.error.message));
+  });
+
   /* -------------------------------------------------------------- audit */
 
   app.get('/api/audit/egress', async () => ({ entries: await AuditUC.egressLog() }));
+
+  app.get('/api/audit/log', async () => ({ lines: await AuditUC.applicationLog() }));
 
   /* ---------------------------------------------------------------- ai */
 

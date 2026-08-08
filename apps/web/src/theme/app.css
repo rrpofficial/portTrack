@@ -186,3 +186,140 @@ body {
 }
 
 .pt-error { color: var(--pt-loss); font: var(--pt-text-caption); margin: 0; }
+
+/* ------------------------------------------------------------------ layout */
+
+/* Sections that stack full-width cards rather than tiling them. */
+.pt-stack { display: grid; gap: var(--pt-space-4); }
+
+.pt-subhead {
+  font: var(--pt-text-label);
+  margin: var(--pt-space-5) 0 var(--pt-space-2);
+}
+
+.pt-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pt-space-2) var(--pt-space-3);
+  margin: var(--pt-space-4) 0;
+}
+
+.pt-controls label { font: var(--pt-text-label); color: var(--pt-ink-muted); }
+
+.pt-controls input[type='date'],
+.pt-controls select,
+.pt-form select {
+  font: var(--pt-text-body);
+  padding: var(--pt-space-2) var(--pt-space-3);
+  border: 1px solid var(--pt-border-strong);
+  border-radius: var(--pt-radius-control);
+  background: var(--pt-surface);
+  color: var(--pt-ink);
+}
+
+.pt-form input[type='file'] {
+  padding: var(--pt-space-2);
+  background: var(--pt-surface-muted);
+}
+
+.pt-form--grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  align-items: end;
+}
+
+.pt-form--grid label { display: block; margin-bottom: var(--pt-space-1); }
+.pt-form--grid input { width: 100%; }
+
+.pt-form button:disabled { background: var(--pt-border-strong); cursor: not-allowed; }
+
+.pt-button-inline {
+  font: var(--pt-text-label);
+  padding: var(--pt-space-2) var(--pt-space-4);
+  border: none;
+  border-radius: var(--pt-radius-chip);
+  background: var(--pt-accent);
+  color: var(--pt-ink-inverse);
+  cursor: pointer;
+}
+
+.pt-button-inline:hover { background: var(--pt-accent-hover); }
+.pt-button-inline:disabled { background: var(--pt-border-strong); cursor: not-allowed; }
+
+.pt-link--inline {
+  font: var(--pt-text-body);
+  color: var(--pt-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  padding: 0;
+}
+
+/* ------------------------------------------------------------------ tables */
+
+/* Wide tables scroll inside their card; the page itself never scrolls sideways. */
+.pt-table-scroll { overflow-x: auto; }
+
+.pt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font: var(--pt-text-body);
+}
+
+.pt-table th {
+  text-align: start;
+  font: var(--pt-text-caption);
+  color: var(--pt-ink-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--pt-tracking-normal);
+  padding: var(--pt-space-2) var(--pt-space-3);
+  border-bottom: 1px solid var(--pt-border-strong);
+  white-space: nowrap;
+}
+
+.pt-table td {
+  padding: var(--pt-space-3);
+  border-bottom: 1px solid var(--pt-border);
+  vertical-align: top;
+}
+
+.pt-table tbody tr:last-child td { border-bottom: none; }
+
+.pt-align-end { text-align: end; }
+
+.pt-table__detail > td { background: var(--pt-surface-muted); }
+
+.pt-table--nested { margin: 0; }
+.pt-table--nested th { border-bottom-color: var(--pt-border); }
+
+.pt-table__group th {
+  padding-top: var(--pt-space-4);
+  color: var(--pt-ink);
+  font: var(--pt-text-label);
+  text-transform: none;
+}
+
+.pt-table__total td {
+  font: var(--pt-text-label);
+  border-bottom: 2px solid var(--pt-border-strong);
+}
+
+/* Hashes and opaque references: dimmed, because they are evidence, not content. */
+.pt-hash { color: var(--pt-ink-muted); font: var(--pt-text-caption); }
+
+.pt-log {
+  list-style: none;
+  margin: var(--pt-space-3) 0 0;
+  padding: var(--pt-space-3);
+  background: var(--pt-surface-sunken);
+  border-radius: var(--pt-radius-control);
+  font: var(--pt-text-caption);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.pt-log li { padding: var(--pt-space-1) 0; word-break: break-all; }
+
+@media (max-width: 640px) {
+  .pt-topbar { flex-wrap: wrap; gap: var(--pt-space-3); }
+  .pt-topbar nav { flex-wrap: wrap; gap: var(--pt-space-3); }
+}

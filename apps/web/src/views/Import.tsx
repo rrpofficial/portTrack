@@ -1,0 +1,277 @@
+/**
+ * Import — statement upload.
+ *
+ * The statement type is chosen explicitly rather than sniffed from the file.
+ * The source format determines the asset class, and asset class determines tax
+ * treatment: a wrong guess would file a bank balance as equity and the user
+ * would have no reason to look.
+ *
+ * The file is read in the browser and posted as base64. It never touches a
+ * temporary path on the host, and a CAMS password is used for this one request
+ * and never stored (NFR-1).
+ */
+import { useCallback, useEffect, useState, type ChangeEvent, type SyntheticEvent } from 'react';
+import { api, type ImportReport, type ParserName, type TemplateSummary } from '../api.js';
+import { Card, Chip } from '../components/primitives.js';
+
+const PARSERS: readonly { readonly value: ParserName; readonly label: string }[] = [
+  { value: 'ZERODHA_TRADEBOOK', label: 'Zerodha tradebook' },
+  { value: 'ZERODHA_TAX_PNL', label: 'Zerodha tax P&L' },
+  { value: 'CAMS', label: 'CAMS / KFintech statement (PDF)' },
+  { value: 'VESTED', label: 'Vested account activity' },
+  { value: 'ETRADE', label: 'E*TRADE transaction history' },
+  { value: 'TEMPLATE', label: 'portTrack CSV template' },
+];
+
+/** Base64 without loading the whole file into a string first. */
+function toBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+export function Import({ onImported }: { onImported: () => void }) {
+  const [file, setFile] = useState<File | undefined>();
+  const [parser, setParser] = useState<ParserName>('ZERODHA_TRADEBOOK');
+  const [password, setPassword] = useState('');
+  const [report, setReport] = useState<ImportReport | undefined>();
+  const [error, setError] = useState<string | undefined>();
+  const [busy, setBusy] = useState(false);
+  const [templates, setTemplates] = useState<readonly TemplateSummary[]>([]);
+
+  useEffect(() => {
+    void (async () => {
+      const result = await api.templates();
+      if (result.ok) setTemplates(result.value.templates);
+    })();
+  }, []);
+
+  const submit = useCallback(async (): Promise<void> => {
+    if (file === undefined) {
+      setError('Choose a statement file first.');
+      return;
+    }
+    setBusy(true);
+    setError(undefined);
+    setReport(undefined);
+
+    const result = await api.importStatement({
+      file: toBase64(await file.arrayBuffer()),
+      fileName: file.name,
+      parser,
+      ...(password.length === 0 ? {} : { password }),
+    });
+
+    setBusy(false);
+    if (!result.ok) {
+      setError(result.error.message);
+      return;
+    }
+    // Cleared immediately: a CAMS password is never held beyond its request.
+    setPassword('');
+    setReport(result.value);
+    onImported();
+  }, [file, parser, password, onImported]);
+
+  function onSubmit(event: SyntheticEvent): void {
+    event.preventDefault();
+    void submit();
+  }
+
+  function onFile(event: ChangeEvent<HTMLInputElement>): void {
+    setFile(event.target.files?.[0]);
+  }
+
+  return (
+    <div className="pt-stack">
+      <Card title="Import a statement">
+        <p className="pt-muted">
+          Parsed entirely on this machine. Nothing is uploaded anywhere — the container that reads
+          your file has no route to the internet.
+        </p>
+
+        <form onSubmit={onSubmit} className="pt-form">
+          <label htmlFor="parser">Statement type</label>
+          <select
+            id="parser"
+            value={parser}
+            onChange={(event) => {
+              setParser(event.target.value as ParserName);
+            }}
+          >
+            {PARSERS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+
+          <label htmlFor="statement">Statement file</label>
+          <input id="statement" type="file" onChange={onFile} />
+
+          {parser === 'CAMS' && (
+            <>
+              <label htmlFor="password">PDF password</label>
+              <input
+                id="password"
+                type="password"
+                value={password}
+                autoComplete="off"
+                onChange={(event) => {
+                  setPassword(event.target.value);
+                }}
+              />
+            </>
+          )}
+
+          <button type="submit" disabled={busy}>
+            {busy ? 'Importing…' : 'Import'}
+          </button>
+          {error !== undefined && (
+            <p className="pt-error" role="alert">
+              {error}
+            </p>
+          )}
+        </form>
+      </Card>
+
+      <Card title="Manual entry — portTrack CSV templates">
+        <p className="pt-muted">
+          For everything with no broker export: hand loans, property, cash, chit funds, unlisted
+          shares. Download a template, fill it in a spreadsheet, and import it with{' '}
+          <strong>portTrack CSV template</strong> selected above. The template is recognised from
+          its header row, so leave the header exactly as it is.
+        </p>
+
+        <div className="pt-table-scroll">
+          <table className="pt-table" data-testid="template-list">
+            <thead>
+              <tr>
+                <th scope="col">Template</th>
+                <th scope="col">Records</th>
+                <th scope="col">Columns</th>
+                <th scope="col" />
+              </tr>
+            </thead>
+            <tbody>
+              {templates.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="pt-muted">
+                    Loading templates…
+                  </td>
+                </tr>
+              )}
+              {templates.map((template) => (
+                <tr key={template.name}>
+                  <td>
+                    <strong>{template.name}</strong>
+                    <div className="pt-muted">{template.description}</div>
+                  </td>
+                  <td>{template.assetClass.replaceAll('_', ' ').toLowerCase()}</td>
+                  <td className="pt-hash">{template.columns.join(', ')}</td>
+                  <td className="pt-align-end">
+                    <a
+                      className="pt-link pt-link--inline"
+                      href={api.templateUrl(template.name)}
+                      download={`${template.name}.csv`}
+                    >
+                      Download
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {report !== undefined && (
+        <Card
+          title="Import result"
+          action={<Chip>{report.committed ? 'Committed' : 'Nothing committed'}</Chip>}
+        >
+          <dl className="pt-stats" data-testid="import-summary">
+            <div>
+              <dt>Created</dt>
+              <dd className="pt-numeric">{report.created}</dd>
+            </div>
+            <div>
+              <dt>Duplicates skipped</dt>
+              <dd className="pt-numeric">{report.duplicates}</dd>
+            </div>
+            <div>
+              <dt>Rejected</dt>
+              <dd className="pt-numeric">{report.rejected}</dd>
+            </div>
+          </dl>
+
+          {report.errors.length > 0 && (
+            <>
+              <h3 className="pt-subhead">Rejected rows</h3>
+              <div className="pt-table-scroll">
+                <table className="pt-table" data-testid="import-errors">
+                  <thead>
+                    <tr>
+                      <th scope="col">Row</th>
+                      <th scope="col">Column</th>
+                      <th scope="col">Value</th>
+                      <th scope="col">Why</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.errors.map((rowError) => (
+                      <tr key={`${String(rowError.row)}-${rowError.column}`}>
+                        <td className="pt-numeric">{rowError.row}</td>
+                        <td>{rowError.column}</td>
+                        <td>{rowError.value}</td>
+                        <td>
+                          {rowError.reason}
+                          {rowError.expectedFormat !== undefined && (
+                            <span className="pt-muted"> — expected {rowError.expectedFormat}</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {report.unapplied !== undefined && report.unapplied.length > 0 && (
+            <>
+              <h3 className="pt-subhead">Parsed but not applied</h3>
+              <p className="pt-muted">
+                These rows were read correctly but could not be placed on the ledger. They are shown
+                rather than discarded.
+              </p>
+              <div className="pt-table-scroll">
+                <table className="pt-table" data-testid="import-unapplied">
+                  <thead>
+                    <tr>
+                      <th scope="col">Row</th>
+                      <th scope="col">Kind</th>
+                      <th scope="col">Date</th>
+                      <th scope="col">Why</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.unapplied.map((row) => (
+                      <tr key={`${String(row.sourceRow)}-${row.kind}`}>
+                        <td className="pt-numeric">{row.sourceRow}</td>
+                        <td>{row.kind}</td>
+                        <td>{row.date}</td>
+                        <td>{row.reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
