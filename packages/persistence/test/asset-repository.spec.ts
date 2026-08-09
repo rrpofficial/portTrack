@@ -147,12 +147,99 @@ describe('US-8.3 Scenario: An asset survives a save and reload unchanged', () =>
         interestRatePct: '8',
         interestBasis: 'SIMPLE',
         startDate: '2025-04-01',
-        repayments: [{ date: '2025-10-01', principal: inr('500000') }],
+        repayments: [
+          {
+            date: '2025-10-01',
+            principal: inr('500000'),
+            paymentId: 'ast_hand_loan_0001_rep_0000',
+          },
+        ],
+        interestPayments: [],
       },
     };
 
     expectOk(await AssetRepository.save(loan));
     expect(await AssetRepository.findById(loan.assetId)).toEqual(loan);
+  });
+
+  it('round-trips the register fields: borrower name, notes, closing date', async () => {
+    const loan: Asset = {
+      assetId: 'ast_hand_loan_0002',
+      assetClass: 'HAND_LOAN',
+      jurisdiction: 'DOMESTIC',
+      currency: 'INR',
+      lots: [],
+      incomeEvents: [],
+      corporateActions: [],
+      liquidity: 'ILLIQUID',
+      handLoan: {
+        assetId: 'ast_hand_loan_0002',
+        borrowerRef: 'brw_9f2c',
+        // Held only here, in the encrypted database. Exports carry the ref.
+        borrowerName: 'Rajesh Sharma',
+        notes: 'Lent for a house deposit; repaying after the sale completes.',
+        closedDate: '2026-03-31',
+        principal: inr('5000000'),
+        interestRatePct: '8',
+        interestBasis: 'SIMPLE',
+        startDate: '2025-04-01',
+        repayments: [
+          {
+            date: '2025-10-01',
+            principal: inr('500000'),
+            paymentId: 'rep_a',
+            mode: 'BANK_TRANSFER',
+            notes: 'NEFT, partial',
+          },
+        ],
+        interestPayments: [
+          { paymentId: 'int_a', date: '2025-07-01', amount: inr('100000'), mode: 'UPI' },
+          {
+            paymentId: 'int_b',
+            date: '2025-10-01',
+            amount: inr('100000'),
+            mode: 'CASH',
+            notes: 'Handed over in person',
+          },
+        ],
+      },
+    };
+
+    expectOk(await AssetRepository.save(loan));
+    expect(await AssetRepository.findById(loan.assetId)).toEqual(loan);
+  });
+
+  it('keeps interest payments distinct from principal repayments', async () => {
+    const loan: Asset = {
+      assetId: 'ast_hand_loan_0003',
+      assetClass: 'HAND_LOAN',
+      jurisdiction: 'DOMESTIC',
+      currency: 'INR',
+      lots: [],
+      incomeEvents: [],
+      corporateActions: [],
+      liquidity: 'ILLIQUID',
+      handLoan: {
+        assetId: 'ast_hand_loan_0003',
+        borrowerRef: 'brw_x',
+        principal: inr('1000000'),
+        interestRatePct: '12',
+        interestBasis: 'SIMPLE',
+        startDate: '2025-04-01',
+        repayments: [],
+        interestPayments: [
+          { paymentId: 'int_1', date: '2025-07-01', amount: inr('30000'), mode: 'UPI' },
+        ],
+      },
+    };
+
+    expectOk(await AssetRepository.save(loan));
+    const reloaded = await AssetRepository.findById(loan.assetId);
+
+    // Stored in separate tables so nothing can sum them together — an interest
+    // payment counted as repayment would silently write off principal.
+    expect(reloaded?.handLoan?.repayments).toHaveLength(0);
+    expect(reloaded?.handLoan?.interestPayments).toHaveLength(1);
   });
 });
 

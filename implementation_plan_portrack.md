@@ -2534,12 +2534,238 @@ to the synchronous path, or every vault already on disk would be locked out of i
 **Also found while investigating:** a browser tab left open on the unlock screen re-submits as soon as
 the API comes back, which is why a wiped `data/` directory kept reappearing with a vault in it.
 
+### M11e — hand loans silently understated (2026-08-08)
+
+Reported from the running app: a template importing ₹26,00,000 and ₹4,00,000 of hand loans showed
+₹30,00,000 on the Ledger but **₹4,00,000 on the Dashboard**, with net worth ₹5,00,000 instead of
+₹31,00,000. Two faults produced the one wrong number.
+
+**1. Identity.** `assetIdFor` keyed a hand loan on the BORROWER, so two loans to the same person
+collapsed into a single asset holding two lots but only the first row's terms. That is wrong before
+any arithmetic: two loans are two receivables with different principals, rates and start dates, and
+interest accrues separately on each. Merged, the 9% loan would have accrued at 8% forever.
+
+**2. Valuation.** `valuation.ts` read a hand loan from its single `handLoan` block, under a comment
+asserting *"a loan receivable has no lots"*. That held when hand loans had a dedicated entry path;
+the template importer creates one lot per row, so the second lot was never read at all.
+
+**Fixed at both levels.** The loan id now includes its own start date and principal — derived from
+the loan's terms rather than its row number, so a re-import or a differently ordered export still
+resolves to the same asset. And `describesEveryLot` stops the valuation trusting one `handLoan` block
+for a multi-lot asset: it falls back to cost basis, losing accrued interest (a few percent, visible)
+rather than an entire loan (invisible).
+
+**What made this dangerous is that nothing looked broken.** The total was wrong but plausible, and the
+two screens disagreed silently — the Ledger sums lots, the Dashboard did not. A test now asserts the
+two agree, which is the discrepancy a user can actually see.
+
+Verified against the running stack with the reported figures: `HAND_LOAN ₹30,00,000`, `net worth
+₹31,00,000`, three holdings.
+
+```
+unit + functional   620 passing   (was 613; +7 for hand loan valuation)
+E2E (Playwright)     28 passing
+container (Docker)   38 passing
+```
+
+### M12 — the hand-loan register (2026-08-08)
+
+Delivered against `handloan-tracking-requirements.md`: a **Loans** tab replacing a tracking
+spreadsheet, plus the CSV import path for it.
+
+**Built on the existing hand-loan assets, not a parallel loan table.** A separate store would have
+given the register and net worth two sources of truth — which is exactly how ₹26,00,000 went missing
+in M11e. Recording a loan in the tab and importing one from a sheet land in the same place.
+
+**Three distinctions carry the module, each a way money goes missing in a spreadsheet:**
+
+1. **Interest payments are not principal repayments.** They are stored in separate tables so nothing
+   can sum them together; conflated, paying interest writes off principal.
+2. **Status tracks the PRINCIPAL, so a REPAID loan can still owe interest.** Pending interest is
+   reported in two tiles — active loans and settled principal — because the second has no repayment
+   arriving alongside it and is the balance nobody chases.
+3. **Interest accrues on the declining balance.** `handLoanAccruedInterest` already did this
+   correctly on a 30/360 basis; the register simply stopped ignoring it.
+
+**Derived columns are recomputed, never trusted.** The template accepts all five of the sheet's
+computed columns so an existing spreadsheet pastes in unchanged, then recomputes them and *reports*
+disagreement rather than letting a stale cell win — or silently discarding the user's figure, which
+would be the same failure in the other direction. A row saying only *"Repaid"*, with no repayment
+column, has its repayment reconstructed on the closing date; without that the loan would show its
+full principal outstanding while its own status said otherwise.
+
+**Filtering, sorting and totals run server-side.** Totals are computed over the FILTERED set so the
+tiles always describe what is on screen, and every sum stays in decimal.js — adding decimal strings
+in the browser would reintroduce the drift ADR-002 exists to prevent, on amounts someone is owed.
+
+**PDF written from scratch** — catalog, pages, xref, two base-14 fonts. Egress is denied by default
+(ADR-010), so a new dependency is a structural decision; the subset needed here is small enough that
+owning it costs less than owning a supply-chain risk. Verified by rendering, not by parsing.
+
+**Borrower names now persist**, reversing an earlier deliberate choice: the register is filtered and
+sorted by name, and a list of `brw_85e56cdc` is unusable. The name lives only in the encrypted
+database; the asset id — which reaches snapshots and exports — remains the hash.
+
+```
+unit + functional   683 passing   (was 620; +32 engine, +25 register, +6 persistence/templates)
+E2E (Playwright)     35 passing   (was 28)
+container (Docker)   38 passing
+```
+
+Caught by the guard tests, not by review: the new E2E seeded borrower names from `Date.now()`, which
+`toolchain.spec.ts` rejects as wall-clock use in a test body. It was right — the names are fixed now,
+and recording identical terms is idempotent, so a re-run against an existing vault is harmless.
+
+### M12a — `1,00,000` broke the register (2026-08-09)
+
+Reported: the Loans tab stuck at "Loading…". It was not loading — it was a 500:
+
+```
+{"statusCode":500,"message":"[DecimalError] Invalid argument: 1,00,000"}
+```
+
+**`LoanUC.recordInterestPayment` and `recordPrincipalRepayment` validated nothing.** An amount typed
+as `1,00,000` — a completely reasonable thing for anyone to write — was stored verbatim, and every
+subsequent read of ANY loan threw on it. The failure was total: the register could not load, so there
+was no way to find or fix the offending row from inside the application.
+
+The route layer built `{ amount, currency }` as a raw object literal, bypassing `Money.of`, which
+does validate and would have caught it. The invariant "every `Money.amount` is a bare decimal string"
+was assumed everywhere and enforced nowhere.
+
+**Fixed at three levels:**
+
+- `Money.parse` reads user input without throwing and accepts digit grouping — Indian (`1,00,000`)
+  and Western (`100,000`), plus `₹`/`Rs.` and stray spaces. A comma is always a SEPARATOR, never a
+  decimal point: Indian grouping is irregular, so `1,5` cannot mean one-and-a-half here.
+- Every write boundary parses instead of trusting, and returns a Result. Garbage now gets a 422 with
+  a message that says what to do, not a 500 with a library's name in it.
+- `Money.fromStorage` repairs on read, so a vault already holding the bad value opens. It returns an
+  already-readable string **verbatim** — canonicalising would rewrite `12.50` as `12.5`, and snapshot
+  content hashes are taken over exactly these strings.
+
+Also added a Fastify error handler: an unhandled throw was returning the raw internal message, which
+exposed a library and a user's amount while telling them nothing actionable.
+
+**And a second bug, raised in the same message: was pending interest counted as an asset?**
+
+It was — but the WRONG figure. `ValuationEngine` added *total accrued* interest to the outstanding
+principal, including interest the borrower had already paid. That money is cash in a bank account,
+so counting it again as a receivable reports it twice. Now the loan is valued at outstanding
+principal plus interest **still owed**, clamped at zero so an overpayment cannot inflate net worth.
+
+Verified live against the reported scenario: ₹12,00,000 lent, ₹1,44,000 accrued, ₹1,00,000 received
+→ register loads, and net worth reports ₹12,44,000 rather than ₹13,44,000.
+
+```
+unit + functional   700 passing   (was 683; +17 for money input and loan valuation)
+```
+
+> ⚠ `vault-encryption.spec.ts › leaks no PII pattern anywhere in the raw file` failed twice under
+> full-suite load and passed on every isolated and repeated run since. Not diagnosed. It is a
+> **privacy assertion**, so it should be treated as a real intermittent until understood rather than
+> written off as flake.
+
+### M12b — a loan is not a holding (2026-08-09)
+
+Reported: the Ledger showed each hand loan as `ast_hand_loan_brw_9f86…_2026_08_10_100000 · hand loan ·
+domestic · 0 lots · 0 held · ₹0`.
+
+**The data was right; the view was wrong.** `LoanUC.record` creates the asset with `lots: []`, which is
+correct — a receivable has no acquisition lots — but Holdings is built for *instruments* and renders
+lots, held quantity and cost per unit. All three are meaningless for a loan, so every column read
+zero, the raw asset id showed through as the name (no `symbol` is set), and the one figure that
+matters — what is still owed — was absent entirely.
+
+**What a ledger entry for a hand loan should be.** Not a holding of units. A loan out is a
+receivable, carried at the principal still owed plus interest accrued and not yet received; a partial
+repayment reduces the outstanding principal and, from that date, what earns interest; full repayment
+takes the principal to zero while any unpaid interest remains receivable. Quantity and lots never
+enter into it.
+
+So hand loans now have their **own Ledger section**, alongside Disposals and Liabilities, with the
+columns a receivable actually has: borrower, lent on, status, principal lent, outstanding, interest
+owed, and carrying value. They are excluded from Holdings entirely.
+
+The section reads the **loan register**, not the raw assets, so the Ledger and the Loans tab cannot
+disagree about the same money. Verified: carrying values sum to exactly the `HAND_LOAN` figure in net
+worth (₹6,60,000 + ₹6,36,000 = ₹12,96,000).
+
+**Also:** the borrower filter was a checkbox per person — readable at three names, unusable at fifty,
+and it pushed the register off the screen. It is now a dropdown whose selections become removable
+chips, keeping multi-select without the wall of controls. A chosen borrower leaves the list, so the
+same person cannot be added twice.
+
+```
+E2E (Playwright)   37 passing   (was 35)
+```
+
+### M12c — the Dashboard was stale, not wrong (2026-08-09)
+
+Reported: Loans showed ₹2,00,000 lent with ₹11,300 interest owed and the Ledger agreed, while the
+Dashboard read **₹0 · 0 holdings · "No holdings recorded yet"**.
+
+The API was correct throughout — the same request the Dashboard makes returned ₹2,11,300, matching
+the register exactly. **`App.tsx` fetched the valuation once, on unlock, and never again.** Anything
+recorded afterwards — a loan, a payment, an import — left the Dashboard showing the state of the
+portfolio at the moment the vault was opened.
+
+Two screens disagreeing about net worth is worse than either being briefly stale, so:
+
+- The Dashboard **re-values whenever it is opened**. The tab change is the natural moment to
+  reconcile, and it is what the user expects the tab to mean.
+- The `Live` chip is gone, replaced by **"as at HH:MM:SS"** and a refresh control. That badge asserted
+  a freshness the screen did not have; a timestamp makes staleness visible rather than something
+  discovered by noticing two tabs disagree.
+- An import already triggered a re-value; that stays, so the Dashboard is correct before the user
+  navigates back to it.
+
+```
+E2E (Playwright)   39 passing   (was 37)
+```
+
+The new test pins the reported sequence directly: record a loan, open the Dashboard, and net worth
+must have changed without a page reload.
+
+### M12d — choosing which template (2026-08-09)
+
+Requested: selecting *portTrack CSV template* in Import should reveal a dropdown of the templates
+available under it.
+
+Taken further than presentation, because naming the template makes the import **safer**, not just
+tidier. Detection can only ever report "this matches nothing"; a declared template can be diffed
+against the file:
+
+```
+declared Custom_Cash, balance column missing
+  → Custom_Cash template header mismatch — missing column(s): balance
+
+same file, detection only
+  → this header matches no portTrack template: account_label, as_of_date, currency…
+```
+
+The first is actionable for someone editing a spreadsheet. The second is not.
+
+It also catches a file uploaded under the **wrong** template — a Hand Loans sheet selected as Cash
+would otherwise import cleanly as a bank balance, which is the wrong asset class and therefore the
+wrong tax treatment, with nothing on screen to suggest anything went wrong.
+
+The dropdown defaults to *Detect from the file's header*, so the previous behaviour is unchanged for
+anyone who does not care; `templateName` is optional throughout. Selecting a template also shows what
+it records and offers a download of that exact file, so the fix for a mismatch is one click away from
+the error.
+
+```
+unit + functional   705 passing   (was 700)
+E2E (Playwright)     41 passing   (was 39)
+```
+
 ### Test inventory
 
 | Suite | Location | Tests | State |
 |---|---|---|---|
-| Unit (domain packages) | `packages/*/test/` | 412 | green |
-| Functional (through `app-services`) | `tests/functional/` | 201 | green |
+| Unit (domain packages) | `packages/*/test/` | 449 | green |
+| Functional (through `app-services`) | `tests/functional/` | 234 | green |
 | Container (FR-8) | `tests/container/` | 38 | green |
-| E2E (Playwright) | `tests/e2e/` | 28 | green |
+| E2E (Playwright) | `tests/e2e/` | 39 | green |
 | Benchmarks (NFR-2) | `tests/functional/perf/` | 2 | green |

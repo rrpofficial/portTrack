@@ -2,7 +2,7 @@
  * Dashboard — net worth, allocation and the entry points to everything else.
  * Renders what the API computed; no figure on this screen is derived here.
  */
-import { Amount, Card, Chip, ProvisionalBanner } from '../components/primitives.js';
+import { Amount, Card, ProvisionalBanner } from '../components/primitives.js';
 import { navigate } from '../router.js';
 import type { Valuation } from '../api.js';
 
@@ -12,10 +12,40 @@ const INR = new Intl.NumberFormat('en-IN', {
   maximumFractionDigits: 0,
 });
 
-export function Dashboard({ valuation }: { valuation: Valuation | undefined }) {
+export function Dashboard({
+  valuation,
+  valuedAt,
+  valuing,
+  onRefresh,
+}: {
+  valuation: Valuation | undefined;
+  valuedAt?: string;
+  valuing?: boolean;
+  onRefresh?: () => void;
+}) {
   return (
     <div className="pt-grid">
-      <Card title="Net worth" action={<Chip>Live</Chip>}>
+      <Card
+        title="Net worth"
+        action={
+          /*
+           * The time it was computed, not a "Live" badge. The badge claimed
+           * freshness the screen did not have: the valuation was fetched once
+           * at unlock, so a loan recorded afterwards left this at ₹0 while the
+           * Ledger showed the money. A visible timestamp makes staleness
+           * something the user can see rather than something they discover.
+           */
+          <button
+            type="button"
+            className="pt-link pt-link--inline"
+            onClick={onRefresh}
+            disabled={valuing === true}
+            data-testid="revalue"
+          >
+            {valuing === true ? 'Valuing…' : valuedAt === undefined ? 'Refresh' : `as at ${valuedAt}`}
+          </button>
+        }
+      >
         {valuation === undefined ? (
           <p className="pt-muted">Loading your portfolio…</p>
         ) : (

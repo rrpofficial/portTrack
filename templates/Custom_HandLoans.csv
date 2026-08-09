@@ -1,7 +1,13 @@
 # portTrack template: Custom_HandLoans
-# Money lent to friends or family, with interest terms
-# interest_basis is SIMPLE or COMPOUND. Interest accrues on a 30/360 basis. The borrower
-# name is hashed on import and never leaves your vault.
+# Money lent to friends or family, with interest and repayment history
+# status is Active, Partially Repaid or Repaid — it is RECOMPUTED from the repayment
+# columns, and so are total_interest_months, interest_balance_months, interest_per_month,
+# total_overall_interest and interest_balance. Those five are accepted so an existing
+# spreadsheet pastes in unchanged; where a figure disagrees with the computed one the
+# import reports it rather than overwriting either. Interest accrues on the DECLINING
+# balance on a 30/360 basis, so a principal repayment reduces what earns from its date.
+# Leave unused payment columns blank. The borrower name is stored encrypted in your vault
+# and is replaced by an opaque reference in anything that leaves this machine.
 #
 # Lines beginning with # are ignored on import. Keep the header row exactly as it is.
-borrower_name,principal_amount,interest_rate_pct,interest_basis,start_date,currency
+borrower_name,notes,loan_date,closed_date,loan_amount,interest_rate_pct,currency,status,principal_repayment_1,principal_date_1,principal_repayment_2,principal_date_2,interest_payment_1,date_1,interest_payment_2,date_2,interest_payment_3,date_3,interest_payment_4,date_4,total_interest_months,interest_balance_months,interest_per_month,total_overall_interest,interest_balance

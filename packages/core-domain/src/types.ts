@@ -189,15 +189,57 @@ export interface Liability {
   readonly asOf: IsoDate;
 }
 
+/** How a payment reached the lender. Recorded because it is what a dispute turns on. */
+export type PaymentMode = 'CASH' | 'BANK_TRANSFER' | 'UPI' | 'CHEQUE' | 'OTHER';
+
+export interface LoanPayment {
+  readonly paymentId: string;
+  readonly date: IsoDate;
+  readonly amount: Money;
+  readonly mode: PaymentMode;
+  readonly notes?: string;
+}
+
+/** A repayment of principal. Interest accrues only on what remains after it. */
+export interface PrincipalRepayment {
+  readonly date: IsoDate;
+  readonly principal: Money;
+  readonly paymentId?: string;
+  readonly mode?: PaymentMode;
+  readonly notes?: string;
+}
+
 export interface HandLoan {
   readonly assetId: string;
   /** Masked reference; resolving it requires the local vault. */
   readonly borrowerRef: string;
+  /**
+   * The borrower's actual name, held ONLY in the encrypted vault.
+   *
+   * Filtering and sorting a loan register by borrower requires it, so it cannot
+   * stay hashed. Everything that leaves this machine — exports, AI payloads —
+   * carries `borrowerRef` instead; this field must never be substituted for it.
+   */
+  readonly borrowerName?: string;
   readonly principal: Money;
   readonly interestRatePct: Percentage;
   readonly interestBasis: 'SIMPLE' | 'COMPOUND';
   readonly startDate: IsoDate;
-  readonly repayments: readonly { readonly date: IsoDate; readonly principal: Money }[];
+  readonly repayments: readonly PrincipalRepayment[];
+  /**
+   * Interest received. Kept separate from principal repayments because paying
+   * interest does not reduce what is owed, and treating the two alike would
+   * quietly write off principal.
+   */
+  readonly interestPayments?: readonly LoanPayment[];
+  /** Free text: the circumstances of the loan, as the spreadsheet recorded them. */
+  readonly notes?: string;
+  /**
+   * When the lender considers the loan closed. Distinct from "principal fully
+   * repaid": interest can still be outstanding after the principal is settled,
+   * which is precisely the case the register has to keep visible.
+   */
+  readonly closedDate?: IsoDate;
 }
 
 export interface ValuedPosition {

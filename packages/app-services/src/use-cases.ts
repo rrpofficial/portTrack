@@ -9,22 +9,34 @@ import {
   Err,
   FutureSnapshotError,
   FyCalendar,
+  Money,
   Ok,
   VaultStateError,
   type EgressAuditEntry,
   type FinancialYear,
   type IsoDate,
   type IsoDateTime,
+  type Money as MoneyValue,
   type Quarter,
   type Result,
 } from '@porttrack/shared-kernel';
+import { createHash } from 'node:crypto';
 import {
+  HandLoanLedger,
+  LoanExporter,
   ValuationEngine,
   type Asset,
   type ExitTransaction,
+  type HandLoan,
   type Liability,
+  type LoanRegister,
+  type LoanSortKey,
+  type LoanStatus,
+  type PaymentMode,
   type PortfolioValuation,
+  type SortDirection,
 } from '@porttrack/core-domain';
+import { borrowerRef } from '@porttrack/ingestion';
 import {
   ScheduleAlGenerator,
   ScheduleFaGenerator,
@@ -344,6 +356,8 @@ export const ImportStatementUC = {
     parser: ParserName;
     mode: ImportMode;
     password?: string;
+    /** The template the user selected, when they selected one. */
+    templateName?: string;
   }): Promise<Result<ImportReport>> {
     const guard = requireUnlocked();
     if (!guard.ok) return guard;
@@ -379,9 +393,251 @@ export const ImportStatementUC = {
       ...report.value,
       // Rows the projection could not place are reported, never dropped.
       unapplied: projected.value.unapplied,
+      // Stated figures the engine recomputed differently — shown, not silently
+      // overridden in either direction.
+      reconciliation: projected.value.reconciliation,
     });
   },
 };
+
+/* -------------------------------------------------------------- hand loans */
+
+export interface RecordLoanInput {
+  readonly borrowerName: string;
+  readonly principal: MoneyValue;
+  readonly interestRatePct: string;
+  readonly loanDate: IsoDate;
+  readonly notes?: string;
+}
+
+export interface RecordPaymentInput {
+  readonly loanId: string;
+  readonly date: IsoDate;
+  readonly amount: MoneyValue;
+  readonly mode: PaymentMode;
+  readonly notes?: string;
+}
+
+export interface LoanQuery {
+  readonly statuses?: readonly LoanStatus[] | undefined;
+  readonly borrowers?: readonly string[] | undefined;
+  readonly sortBy?: LoanSortKey | undefined;
+  readonly direction?: SortDirection | undefined;
+  readonly asOf?: IsoDate | undefined;
+}
+
+/** Loans are HAND_LOAN assets, so the register and net worth cannot disagree. */
+const isLoan = (asset: Asset): boolean =>
+  asset.assetClass === 'HAND_LOAN' && asset.handLoan !== undefined;
+
+const loansOf = (assets: readonly Asset[]): readonly HandLoan[] =>
+  assets.filter(isLoan).map((asset) => asset.handLoan as HandLoan);
+
+/**
+ * Stable and derived from the loan's own terms, so re-recording the same loan
+ * resolves to the same asset rather than duplicating it — the same rule the
+ * statement importer uses.
+ */
+function loanIdFor(input: RecordLoanInput, borrowerRef: string): string {
+  const slug = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  return `ast_hand_loan_${slug(borrowerRef)}_${slug(input.loanDate)}_${slug(input.principal.amount)}`;
+}
+
+export const LoanUC = {
+  /**
+   * The register: filtered, sorted, and totalled over the FILTERED set.
+   *
+   * Every figure is computed here rather than in the browser. Summing decimal
+   * strings in JavaScript would reintroduce exactly the float drift ADR-002
+   * exists to prevent, and these totals are money the user is owed.
+   */
+  async register(query: LoanQuery = {}): Promise<Result<LoanRegister>> {
+    const guard = requireUnlocked();
+    if (!guard.ok) return guard;
+
+    const assets = await AssetRepository.all();
+    return Ok(
+      HandLoanLedger.register({
+        loans: loansOf(assets),
+        asOf: query.asOf ?? currentPorts().clock.today(),
+        filter: {
+          ...(query.statuses === undefined ? {} : { statuses: query.statuses }),
+          ...(query.borrowers === undefined ? {} : { borrowers: query.borrowers }),
+        },
+        ...(query.sortBy === undefined ? {} : { sortBy: query.sortBy }),
+        ...(query.direction === undefined ? {} : { direction: query.direction }),
+      }),
+    );
+  },
+
+  async record(input: RecordLoanInput): Promise<Result<string>> {
+    const guard = requireUnlocked();
+    if (!guard.ok) return guard;
+
+    const name = input.borrowerName.trim();
+    if (name.length === 0) {
+      return Err(new VaultStateError('a borrower name is required'));
+    }
+
+    // Parsed, not trusted. `1,00,000` is a reasonable thing to type and must not
+    // reach storage as a string no arithmetic can read.
+    const principal = Money.parse(input.principal.amount, input.principal.currency);
+    if (!principal.ok) return principal;
+    if (Money.compare(principal.value, Money.zero(principal.value.currency)) <= 0) {
+      return Err(new VaultStateError('a loan amount must be greater than zero'));
+    }
+
+    const rate = Money.parse(input.interestRatePct, 'INR');
+    if (!rate.ok) {
+      return Err(new VaultStateError('an interest rate must be a number, such as 12 or 8.5'));
+    }
+
+    const ref = borrowerRef(name);
+    const loanId = loanIdFor({ ...input, principal: principal.value }, ref);
+
+    const saved = await AssetRepository.save({
+      assetId: loanId,
+      assetClass: 'HAND_LOAN',
+      jurisdiction: 'DOMESTIC',
+      currency: principal.value.currency,
+      lots: [],
+      incomeEvents: [],
+      corporateActions: [],
+      liquidity: 'ILLIQUID',
+      handLoan: {
+        assetId: loanId,
+        borrowerRef: ref,
+        borrowerName: name,
+        principal: principal.value,
+        interestRatePct: rate.value.amount,
+        interestBasis: 'SIMPLE',
+        startDate: input.loanDate,
+        repayments: [],
+        interestPayments: [],
+        ...(input.notes === undefined || input.notes.length === 0 ? {} : { notes: input.notes }),
+      },
+    });
+    return saved.ok ? Ok(loanId) : saved;
+  },
+
+  /** A repayment of PRINCIPAL. Reduces what is owed and what earns interest. */
+  async recordPrincipalRepayment(input: RecordPaymentInput): Promise<Result<void>> {
+    const amount = validPayment(input);
+    if (!amount.ok) return amount;
+
+    return mutateLoan(input.loanId, (loan) => ({
+      ...loan,
+      repayments: [
+        ...loan.repayments,
+        {
+          date: input.date,
+          principal: amount.value,
+          paymentId: paymentIdFor(input, 'rep'),
+          mode: input.mode,
+          ...(input.notes === undefined ? {} : { notes: input.notes }),
+        },
+      ],
+    }));
+  },
+
+  /** A payment of INTEREST. Does not reduce the principal. */
+  async recordInterestPayment(input: RecordPaymentInput): Promise<Result<void>> {
+    const amount = validPayment(input);
+    if (!amount.ok) return amount;
+
+    return mutateLoan(input.loanId, (loan) => ({
+      ...loan,
+      interestPayments: [
+        ...(loan.interestPayments ?? []),
+        {
+          paymentId: paymentIdFor(input, 'int'),
+          date: input.date,
+          amount: amount.value,
+          mode: input.mode,
+          ...(input.notes === undefined ? {} : { notes: input.notes }),
+        },
+      ],
+    }));
+  },
+
+  /**
+   * The register as a file. Exported from the SAME filtered set the screen
+   * shows, so what a lender hands to a borrower matches what they were looking
+   * at when they pressed the button.
+   */
+  async exportCsv(query: LoanQuery = {}): Promise<Result<string>> {
+    const result = await LoanUC.register(query);
+    return result.ok ? Ok(LoanExporter.toCsv(result.value)) : result;
+  },
+
+  async exportPdf(query: LoanQuery = {}): Promise<Result<Uint8Array>> {
+    const result = await LoanUC.register(query);
+    if (!result.ok) return result;
+    return Ok(
+      LoanExporter.toPdf({
+        loans: result.value.loans,
+        totals: result.value.totals,
+        generatedOn: query.asOf ?? currentPorts().clock.today(),
+      }),
+    );
+  },
+
+  /** Closing freezes accrual; it does not assert the money came back. */
+  close(loanId: string, closedDate: IsoDate): Promise<Result<void>> {
+    return mutateLoan(loanId, (loan) => ({ ...loan, closedDate }));
+  },
+
+  reopen(loanId: string): Promise<Result<void>> {
+    return mutateLoan(loanId, (loan) => {
+      const { closedDate: _closed, ...rest } = loan;
+      return rest;
+    });
+  },
+};
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * A payment is checked BEFORE it can reach the vault.
+ *
+ * These recorders previously validated nothing, so an amount typed as `1,00,000`
+ * was persisted verbatim and every later read of the register threw on it — the
+ * whole loan list returned 500, leaving no way to find the offending row from
+ * inside the app.
+ */
+function validPayment(input: RecordPaymentInput): Result<MoneyValue> {
+  if (!ISO_DATE.test(input.date)) {
+    return Err(new VaultStateError('a payment needs a date, as YYYY-MM-DD'));
+  }
+  const amount = Money.parse(input.amount.amount, input.amount.currency);
+  if (!amount.ok) return amount;
+  if (Money.compare(amount.value, Money.zero(amount.value.currency)) <= 0) {
+    return Err(new VaultStateError('a payment must be greater than zero'));
+  }
+  return Ok(amount.value);
+}
+
+/** Derived from the payment itself, so recording it twice cannot double-count. */
+function paymentIdFor(input: RecordPaymentInput, prefix: string): string {
+  return `${prefix}_${createHash('sha256')
+    .update([input.loanId, input.date, input.amount.amount, input.mode].join('|'))
+    .digest('hex')
+    .slice(0, 16)}`;
+}
+
+async function mutateLoan(
+  loanId: string,
+  change: (loan: HandLoan) => HandLoan,
+): Promise<Result<void>> {
+  const guard = requireUnlocked();
+  if (!guard.ok) return guard;
+
+  const asset = await AssetRepository.findById(loanId);
+  if (asset?.handLoan === undefined) {
+    return Err(new VaultStateError(`no hand loan ${loanId} was found`));
+  }
+  return AssetRepository.save({ ...asset, handLoan: change(asset.handLoan) });
+}
 
 /* ----------------------------------------------------------- reference data */
 

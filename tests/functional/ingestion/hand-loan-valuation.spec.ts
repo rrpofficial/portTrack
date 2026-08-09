@@ -22,13 +22,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ImportStatementUC, LedgerUC, ValuePortfolioUC, resetPorts } from '@porttrack/app-services';
 import { Vault } from '@porttrack/persistence';
+import { TemplateRegistry } from '@porttrack/ingestion';
 import { expectOk } from '@porttrack/test-kit';
 
 const PASSPHRASE = 'correct horse battery staple';
 const AS_OF = '2026-08-08T23:59:59.999+05:30';
 
-const HEADER =
-  'borrower_name,principal_amount,interest_rate_pct,interest_basis,start_date,currency';
+/** The register header, taken from the template itself so the two cannot drift. */
+const HEADER = TemplateRegistry.definitions()
+  .find((template) => template.name === 'Custom_HandLoans')!
+  .columns.join(',');
+
+/** borrower, notes, loan_date, closed_date, amount, rate, currency — rest blank. */
+const loanRow = (name: string, amount: string, rate: string, date: string) =>
+  `${name},,${date},,${amount},${rate},INR${','.repeat(18)}`;
 
 async function unlocked(): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), 'porttrack-loans-'));
@@ -52,8 +59,8 @@ afterEach(async () => {
 
 describe('Scenario: Two loans to the same borrower are two receivables', () => {
   const TWO_LOANS = [
-    'Same Person,2600000,8,SIMPLE,2026-08-08,INR',
-    'Same Person,400000,9,SIMPLE,2026-08-08,INR',
+    loanRow('Same Person', '2600000', '8', '2026-08-08'),
+    loanRow('Same Person', '400000', '9', '2026-08-08'),
   ];
 
   it('records them as separate assets, each with its own terms', async () => {
@@ -97,7 +104,7 @@ describe('Scenario: Two loans to the same borrower are two receivables', () => {
 
 describe('Scenario: A hand loan alongside other assets', () => {
   it('reports the full net worth across asset classes', async () => {
-    expectOk(await importCsv(['Same Person,2600000,8,SIMPLE,2026-08-08,INR']));
+    expectOk(await importCsv([loanRow('Same Person', '2600000', '8', '2026-08-08')]));
     expectOk(
       await ImportStatementUC.execute({
         file: Buffer.from(
@@ -119,8 +126,8 @@ describe('Scenario: A hand loan alongside other assets', () => {
 describe('Scenario: Re-importing the same loans changes nothing', () => {
   it('keeps the identity stable so no duplicate loan appears', async () => {
     const rows = [
-      'Same Person,2600000,8,SIMPLE,2026-08-08,INR',
-      'Same Person,400000,9,SIMPLE,2026-08-08,INR',
+      loanRow('Same Person', '2600000', '8', '2026-08-08'),
+      loanRow('Same Person', '400000', '9', '2026-08-08'),
     ];
     expectOk(await importCsv(rows));
     const first = expectOk(await ValuePortfolioUC.execute(AS_OF));
@@ -137,8 +144,8 @@ describe('Scenario: Re-importing the same loans changes nothing', () => {
   it('is order-independent', async () => {
     expectOk(
       await importCsv([
-        'Same Person,400000,9,SIMPLE,2026-08-08,INR',
-        'Same Person,2600000,8,SIMPLE,2026-08-08,INR',
+        loanRow('Same Person', '400000', '9', '2026-08-08'),
+        loanRow('Same Person', '2600000', '8', '2026-08-08'),
       ]),
     );
     const valuation = expectOk(await ValuePortfolioUC.execute(AS_OF));
@@ -150,8 +157,8 @@ describe('Scenario: Loans to different borrowers stay separate', () => {
   it('never merges two people', async () => {
     expectOk(
       await importCsv([
-        'Person One,2600000,8,SIMPLE,2026-08-08,INR',
-        'Person Two,400000,8,SIMPLE,2026-08-08,INR',
+        loanRow('Person One', '2600000', '8', '2026-08-08'),
+        loanRow('Person Two', '400000', '8', '2026-08-08'),
       ]),
     );
 

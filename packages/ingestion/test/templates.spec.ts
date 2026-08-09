@@ -12,10 +12,18 @@ import { describe, it, expect } from 'vitest';
 import { LedgerProjector, TemplateRegistry, TemplateParser, Pipeline } from '@porttrack/ingestion';
 import { expectOk } from '@porttrack/test-kit';
 
+/** The full register header, exactly as the generated template emits it. */
+const HAND_LOAN_HEADER = TemplateRegistry.definitions()
+  .find((template) => template.name === 'Custom_HandLoans')!
+  .columns.join(',');
+
+/** Only the leading fact columns are filled; the rest are blank, as a sheet may be. */
+const handLoanRow = (cells: string) => `${cells}${','.repeat(17)}`;
+
 const HAND_LOANS = [
-  'borrower_name,principal_amount,interest_rate_pct,interest_basis,start_date,currency',
-  'Rajesh Sharma,5000000,8.0,SIMPLE,2025-04-01,INR',
-  'Priya Menon,1200000,9.5,SIMPLE,2025-07-15,INR',
+  HAND_LOAN_HEADER,
+  handLoanRow('Rajesh Sharma,,2025-04-01,,5000000,8.0,INR'),
+  handLoanRow('Priya Menon,,2025-07-15,,1200000,9.5,INR'),
 ].join('\n');
 
 const REAL_ESTATE = [
@@ -46,8 +54,82 @@ describe('US-4.6 Scenario: A template is identified by its header', () => {
 
   it('does not match a template with an extra column', () => {
     // A subset match would silently ignore whatever the user added.
-    const csv = `${HAND_LOANS.split('\n')[0] ?? ''},notes\nX,1,2,SIMPLE,2025-04-01,INR,hello\n`;
+    const csv = `${HAND_LOAN_HEADER},guarantor_name\n`;
     expect(TemplateRegistry.detect(csv)).toBeUndefined();
+  });
+});
+
+describe('US-4.6 Scenario: Naming the template buys a better error', () => {
+  const CASH = 'account_label,as_of_date,balance,currency\nSavings,2026-03-31,50000,INR\n';
+
+  it('imports normally when the declared template matches', async () => {
+    const report = expectOk(
+      await Pipeline.ingest({
+        file: Buffer.from(CASH),
+        fileName: 'cash.csv',
+        parser: 'TEMPLATE',
+        mode: 'STRICT',
+        templateName: 'Custom_Cash',
+      }),
+    );
+    expect(report.created).toBe(1);
+  });
+
+  it('names the exact columns at fault instead of "matches no template"', async () => {
+    const missingBalance = 'account_label,as_of_date,currency\nSavings,2026-03-31,INR\n';
+    const result = await Pipeline.ingest({
+      file: Buffer.from(missingBalance),
+      fileName: 'cash.csv',
+      parser: 'TEMPLATE',
+      mode: 'STRICT',
+      templateName: 'Custom_Cash',
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      // Actionable for someone editing a spreadsheet, which "no template
+      // matches this header" is not.
+      expect(result.error.message).toContain('balance');
+      expect(result.error.message).toContain('Custom_Cash');
+    }
+  });
+
+  it('refuses a file uploaded under the wrong template', async () => {
+    // Without the declaration this imports cleanly — as a bank balance, which
+    // is the wrong asset class and therefore the wrong tax treatment.
+    const result = await Pipeline.ingest({
+      file: Buffer.from(CASH),
+      fileName: 'cash.csv',
+      parser: 'TEMPLATE',
+      mode: 'STRICT',
+      templateName: 'Custom_HandLoans',
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('TEMPLATE_HEADER_MISMATCH');
+  });
+
+  it('still detects from the header when no template is declared', async () => {
+    const report = expectOk(
+      await Pipeline.ingest({
+        file: Buffer.from(CASH),
+        fileName: 'cash.csv',
+        parser: 'TEMPLATE',
+        mode: 'STRICT',
+      }),
+    );
+    expect(report.created).toBe(1);
+  });
+
+  it('rejects a template name it does not know', async () => {
+    const result = await Pipeline.ingest({
+      file: Buffer.from(CASH),
+      fileName: 'cash.csv',
+      parser: 'TEMPLATE',
+      mode: 'STRICT',
+      templateName: 'Custom_Invented',
+    });
+    expect(result.ok).toBe(false);
   });
 });
 
@@ -77,14 +159,67 @@ describe('US-4.6 Scenario: Each template maps to its real asset class and fields
     expect(first?.handLoan?.startDate).toBe('2025-04-01');
   });
 
-  it('never carries the borrower\'s real name forward', () => {
+  it('identifies the loan by an opaque reference, never by the name', () => {
     const rows = expectOk(TemplateParser.parse(HAND_LOANS, 'hand-loans.csv'));
-    const serialised = JSON.stringify(rows);
-    // The most identifying field in the product, belonging to someone who never
-    // consented to being in a dataset.
-    expect(serialised).not.toContain('Rajesh');
-    expect(serialised).not.toContain('Sharma');
+
+    /*
+     * The name IS carried now — the register is filtered and sorted by it, and a
+     * list of `brw_85e56cdc` is unusable. What must not happen is the name
+     * becoming the asset's identity: `symbol` feeds the asset id, which appears
+     * in snapshots and exports, so it stays the hash.
+     */
+    expect(rows[0]?.symbol).toMatch(/^brw_[0-9a-f]{16}$/);
     expect(rows[0]?.handLoan?.borrowerRef).toMatch(/^brw_[0-9a-f]{16}$/);
+    expect(rows[0]?.handLoan?.borrowerName).toBe('Rajesh Sharma');
+  });
+
+  it('derives one reference per person, so their loans do not split', () => {
+    const rows = expectOk(
+      TemplateParser.parse(
+        [
+          HAND_LOAN_HEADER,
+          handLoanRow('Rajesh Sharma,,2025-04-01,,5000000,8.0,INR'),
+          handLoanRow('Rajesh Sharma,,2025-09-01,,1000000,8.0,INR'),
+        ].join('\n'),
+        'hand-loans.csv',
+      ),
+    );
+    expect(rows[0]?.handLoan?.borrowerRef).toBe(rows[1]?.handLoan?.borrowerRef);
+  });
+
+  it('reads the loan history a spreadsheet keeps in fixed payment columns', () => {
+    const csv = [
+      HAND_LOAN_HEADER,
+      // borrower, notes, loan_date, closed, amount, rate, currency, status,
+      // then two principal repayments and four interest payments.
+      'Rajesh Sharma,House deposit,2025-04-01,,1200000,12,INR,Partially Repaid,' +
+        '600000,2025-10-01,,,' +
+        '36000,2025-07-01,36000,2025-10-01,,,,,' +
+        ',,,,',
+    ].join('\n');
+
+    const rows = expectOk(TemplateParser.parse(csv, 'loans.csv'));
+    const loan = rows[0]?.handLoan;
+
+    expect(loan?.notes).toBe('House deposit');
+    expect(loan?.principalRepayments).toHaveLength(1);
+    expect(loan?.principalRepayments[0]?.amount.amount).toBe('600000');
+    expect(loan?.interestPayments).toHaveLength(2);
+    // A blank pair is skipped, not read as a zero payment.
+    expect(loan?.interestPayments.map((p) => p.date)).toEqual(['2025-07-01', '2025-10-01']);
+  });
+
+  it('reconstructs the repayment behind a bare "Repaid" status', () => {
+    // The sheet records the word but not the amount or date; without this the
+    // loan would show its full principal outstanding, contradicting its own row.
+    const csv = [
+      HAND_LOAN_HEADER,
+      handLoanRow('Anil Kumar,,2025-01-01,2025-07-01,400000,12,INR,Repaid'),
+    ].join('\n');
+
+    const rows = expectOk(TemplateParser.parse(csv, 'loans.csv'));
+    expect(rows[0]?.handLoan?.declaredStatus).toBe('REPAID');
+    expect(rows[0]?.handLoan?.closedDate).toBe('2025-07-01');
   });
 
   it('adds stamp duty and registration to the cost of a property', () => {
@@ -109,11 +244,11 @@ describe('US-4.6 Scenario: Each template maps to its real asset class and fields
 });
 
 describe('US-4.6 Scenario: A bad cell is reported with its row and column', () => {
-  it('rejects an unparseable interest basis without losing the good rows', async () => {
+  it('rejects an unrecognised status without losing the good rows', async () => {
     const csv = [
-      'borrower_name,principal_amount,interest_rate_pct,interest_basis,start_date,currency',
-      'Good Borrower,100000,8,SIMPLE,2025-04-01,INR',
-      'Bad Borrower,100000,8,WEEKLY,2025-04-01,INR',
+      HAND_LOAN_HEADER,
+      handLoanRow('Good Borrower,,2025-04-01,,100000,8,INR,Active'),
+      handLoanRow('Bad Borrower,,2025-04-01,,100000,8,INR,Someday'),
     ].join('\n');
 
     const report = expectOk(
@@ -126,9 +261,29 @@ describe('US-4.6 Scenario: A bad cell is reported with its row and column', () =
     );
 
     expect(report.rejected).toBe(1);
-    expect(report.errors[0]?.column).toBe('interest_basis');
-    expect(report.errors[0]?.expectedFormat).toContain('SIMPLE');
+    expect(report.errors[0]?.column).toBe('status');
+    expect(report.errors[0]?.expectedFormat).toContain('Active');
     expect(report.created).toBe(1);
+  });
+
+  it('rejects a payment amount with no date rather than guessing when it landed', async () => {
+    // A payment placed on the wrong date changes the interest, so a missing date
+    // is refused rather than defaulted to the loan date.
+    const csv = [
+      HAND_LOAN_HEADER,
+      handLoanRow('A Borrower,,2025-04-01,,100000,8,INR,Active,,,,,25000'),
+    ].join('\n');
+
+    const report = expectOk(
+      await Pipeline.ingest({
+        file: Buffer.from(csv),
+        fileName: 'loans.csv',
+        parser: 'TEMPLATE',
+        mode: 'LENIENT',
+      }),
+    );
+    expect(report.rejected).toBe(1);
+    expect(report.errors[0]?.column).toBe('date_1');
   });
 
   it('is atomic in STRICT mode', async () => {
@@ -183,7 +338,7 @@ describe('US-4.6 Scenario: Template rows become the right assets on the ledger',
     for (const template of TemplateRegistry.definitions()) {
       const header = TemplateRegistry.generate(template.name);
       const sample: Readonly<Record<string, string>> = {
-        Custom_HandLoans: 'A Borrower,100000,8,SIMPLE,2025-04-01,INR',
+        Custom_HandLoans: handLoanRow('A Borrower,,2025-04-01,,100000,8,INR,Active'),
         Custom_RealEstate: 'A flat,2024-06-10,9500000,570000,30000,INR',
         Custom_Cash: 'An account,2026-03-31,412500,INR',
         Custom_ChitFunds: 'A chit,2025-04-01,10000,24,INR',

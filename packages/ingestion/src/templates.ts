@@ -24,7 +24,7 @@ import {
 } from '@porttrack/shared-kernel';
 import { normaliseDate, parseCsv, type CsvRow, type CsvTable } from './csv.js';
 import { borrowerRef, deterministicImportedAt, provenanceFor } from './provenance.js';
-import type { ParsedTransaction, RowError } from './types.js';
+import type { ParsedLoanPayment, ParsedTransaction, RowError } from './types.js';
 
 export interface TemplateDefinition {
   readonly name: string;
@@ -40,18 +40,48 @@ export const TEMPLATES: readonly TemplateDefinition[] = [
   {
     name: 'Custom_HandLoans',
     columns: [
+      // Facts the lender records.
       'borrower_name',
-      'principal_amount',
+      'notes',
+      'loan_date',
+      'closed_date',
+      'loan_amount',
       'interest_rate_pct',
-      'interest_basis',
-      'start_date',
       'currency',
+      'status',
+      // Principal coming back. Interest accrues only on what remains after each.
+      'principal_repayment_1',
+      'principal_date_1',
+      'principal_repayment_2',
+      'principal_date_2',
+      // Interest received. These do NOT reduce the principal.
+      'interest_payment_1',
+      'date_1',
+      'interest_payment_2',
+      'date_2',
+      'interest_payment_3',
+      'date_3',
+      'interest_payment_4',
+      'date_4',
+      // Derived. Accepted so an existing sheet pastes in unchanged, then
+      // recomputed — see `guidance`.
+      'total_interest_months',
+      'interest_balance_months',
+      'interest_per_month',
+      'total_overall_interest',
+      'interest_balance',
     ],
-    description: 'Money lent to friends or family, with interest terms',
+    description: 'Money lent to friends or family, with interest and repayment history',
     assetClass: 'HAND_LOAN',
     guidance:
-      'interest_basis is SIMPLE or COMPOUND. Interest accrues on a 30/360 basis. ' +
-      'The borrower name is hashed on import and never leaves your vault.',
+      'status is Active, Partially Repaid or Repaid — it is RECOMPUTED from the repayment ' +
+      'columns, and so are total_interest_months, interest_balance_months, interest_per_month, ' +
+      'total_overall_interest and interest_balance. Those five are accepted so an existing ' +
+      'spreadsheet pastes in unchanged; where a figure disagrees with the computed one the ' +
+      'import reports it rather than overwriting either. Interest accrues on the DECLINING ' +
+      'balance on a 30/360 basis, so a principal repayment reduces what earns from its date. ' +
+      'Leave unused payment columns blank. The borrower name is stored encrypted in your vault ' +
+      'and is replaced by an opaque reference in anything that leaves this machine.',
   },
   {
     name: 'Custom_RealEstate',
@@ -238,6 +268,74 @@ function requireNumber(reader: Reader, column: string): string | RowResult {
 
 const isRowResult = (value: string | RowResult): value is RowResult => typeof value !== 'string';
 
+const isRowError = (value: unknown): value is RowResult =>
+  typeof value === 'object' && value !== null && 'error' in value;
+
+/** A date column that may legitimately be blank — an open loan has no closing date. */
+function optionalDate(reader: Reader, column: string): string | undefined | RowResult {
+  const raw = reader.cell(column);
+  if (raw.length === 0) return undefined;
+  const date = normaliseDate(raw);
+  if (date === undefined) {
+    return invalid(reader, column, raw, 'not a recognisable date', 'YYYY-MM-DD');
+  }
+  return date;
+}
+
+/**
+ * The status a spreadsheet stated. Returned for reconstruction only — status is
+ * DERIVED from repayments, so a stale cell can never override the arithmetic.
+ */
+function parseStatus(
+  raw: string,
+): 'ACTIVE' | 'PARTIALLY_REPAID' | 'REPAID' | undefined | 'INVALID' {
+  const normalised = raw.trim().toUpperCase().replace(/[\s-]+/g, '_');
+  if (normalised.length === 0) return undefined;
+  if (normalised === 'ACTIVE' || normalised === 'OPEN') return 'ACTIVE';
+  if (normalised === 'REPAID' || normalised === 'CLOSED') return 'REPAID';
+  if (normalised === 'PARTIALLY_REPAID' || normalised === 'PARTIAL') return 'PARTIALLY_REPAID';
+  return 'INVALID';
+}
+
+/**
+ * Reads the fixed amount/date column pairs a spreadsheet uses for payments.
+ *
+ * A blank pair is skipped; an amount without its date, or a date without its
+ * amount, is an error rather than a guess — a payment missing its date cannot
+ * be placed on the accrual timeline, and placing it wrongly changes the interest.
+ */
+function collectPayments(
+  reader: Reader,
+  currency: Parameters<typeof Money.of>[1],
+  pairs: readonly (readonly [string, string])[],
+): readonly ParsedLoanPayment[] | RowResult {
+  const payments: ParsedLoanPayment[] = [];
+
+  for (const [amountColumn, dateColumn] of pairs) {
+    const rawAmount = reader.cell(amountColumn);
+    const rawDate = reader.cell(dateColumn);
+    if (rawAmount.length === 0 && rawDate.length === 0) continue;
+
+    if (rawAmount.length === 0) {
+      return invalid(reader, amountColumn, '', 'a date was given without an amount', 'an amount');
+    }
+    if (!NUMBER.test(rawAmount)) {
+      return invalid(reader, amountColumn, rawAmount, 'not a valid number', 'a decimal amount');
+    }
+    if (rawDate.length === 0) {
+      return invalid(reader, dateColumn, '', 'an amount was given without a date', 'YYYY-MM-DD');
+    }
+    const date = normaliseDate(rawDate);
+    if (date === undefined) {
+      return invalid(reader, dateColumn, rawDate, 'not a recognisable date', 'YYYY-MM-DD');
+    }
+
+    payments.push({ date, amount: Money.of(rawAmount, currency) });
+  }
+
+  return payments;
+}
+
 /** Optional money column; absent or blank contributes zero rather than failing. */
 function optionalMoney(reader: Reader, column: string, currency: string): MoneyValue {
   const raw = reader.cell(column);
@@ -261,43 +359,69 @@ function mapRow(
 
   switch (template.name) {
     case 'Custom_HandLoans': {
-      const startDate = requireDate(reader, 'start_date');
-      if (isRowResult(startDate)) return startDate;
-      const principal = requireNumber(reader, 'principal_amount');
+      const loanDate = requireDate(reader, 'loan_date');
+      if (isRowResult(loanDate)) return loanDate;
+      const principal = requireNumber(reader, 'loan_amount');
       if (isRowResult(principal)) return principal;
       const rate = requireNumber(reader, 'interest_rate_pct');
       if (isRowResult(rate)) return rate;
-
-      const basis = reader.cell('interest_basis').toUpperCase();
-      if (basis !== 'SIMPLE' && basis !== 'COMPOUND') {
-        return invalid(
-          reader,
-          'interest_basis',
-          reader.cell('interest_basis'),
-          'unrecognised interest basis',
-          'SIMPLE or COMPOUND',
-        );
-      }
 
       const name = reader.cell('borrower_name');
       if (name.length === 0) {
         return invalid(reader, 'borrower_name', '', 'a borrower is required', 'a name');
       }
 
+      const closedDate = optionalDate(reader, 'closed_date');
+      if (isRowError(closedDate)) return closedDate;
+
+      const declaredStatus = parseStatus(reader.cell('status'));
+      if (declaredStatus === 'INVALID') {
+        return invalid(
+          reader,
+          'status',
+          reader.cell('status'),
+          'unrecognised status',
+          'Active, Partially Repaid or Repaid',
+        );
+      }
+
+      const principalRepayments = collectPayments(reader, currency, [
+        ['principal_repayment_1', 'principal_date_1'],
+        ['principal_repayment_2', 'principal_date_2'],
+      ]);
+      if (isRowError(principalRepayments)) return principalRepayments;
+
+      const interestPayments = collectPayments(reader, currency, [
+        ['interest_payment_1', 'date_1'],
+        ['interest_payment_2', 'date_2'],
+        ['interest_payment_3', 'date_3'],
+        ['interest_payment_4', 'date_4'],
+      ]);
+      if (isRowError(interestPayments)) return interestPayments;
+
+      const notes = reader.cell('notes');
+
       return {
         txn: {
           ...base,
           kind: 'BUY',
-          date: startDate,
-          // Opaque from here on; the raw name is never carried forward.
+          date: loanDate,
+          // The OPAQUE reference identifies the asset; the name travels only in
+          // the handLoan block, which is stored encrypted and never exported raw.
           symbol: borrowerRef(name),
           quantity: '1',
           pricePerUnit: Money.of(principal, currency),
           handLoan: {
             borrowerRef: borrowerRef(name),
+            borrowerName: name,
             interestRatePct: rate,
-            interestBasis: basis,
-            startDate,
+            interestBasis: 'SIMPLE',
+            startDate: loanDate,
+            ...(closedDate === undefined ? {} : { closedDate }),
+            ...(notes.length === 0 ? {} : { notes }),
+            principalRepayments,
+            interestPayments,
+            ...(declaredStatus === undefined ? {} : { declaredStatus }),
           },
         },
       };
@@ -436,7 +560,30 @@ export interface TemplateParseOutcome {
   readonly template?: TemplateDefinition;
 }
 
-export function parseTemplateFile(csv: string, fileName: string): Result<TemplateParseOutcome> {
+/**
+ * @param expected the template the user SAID they were importing, if they said.
+ *
+ * Naming it buys a far better error. Detection can only report "this matches
+ * nothing"; a declared template can be diffed against the file and report
+ * exactly which columns are missing and which were not expected — which is what
+ * someone editing a spreadsheet can actually act on. It also catches choosing
+ * Cash and uploading Hand Loans, which would otherwise import silently and
+ * correctly as the wrong thing.
+ */
+export function parseTemplateFile(
+  csv: string,
+  fileName: string,
+  expected?: string,
+): Result<TemplateParseOutcome> {
+  if (expected !== undefined && expected.length > 0) {
+    const declared = byName.get(expected);
+    if (declared === undefined) {
+      return Err(new TemplateHeaderMismatchError(`unknown template "${expected}"`));
+    }
+    const valid = validateHeaders(csv, expected);
+    if (!valid.ok) return valid;
+  }
+
   const template = detectTemplate(csv);
   if (template === undefined) {
     const { header } = parseCsv(csv);

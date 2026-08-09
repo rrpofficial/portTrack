@@ -6,10 +6,7 @@ import {
   Err,
   Ok,
   UnsupportedAssetClassError,
-  notImplemented,
   type Currency,
-  type IsoDate,
-  type Money as MoneyValue,
   type Result,
 } from '@porttrack/shared-kernel';
 import { allocateFifo, recordAcquisition, totalCostBasis } from './lots.js';
@@ -25,6 +22,8 @@ import {
 import { recordDividend, recordInterest } from './income.js';
 import { value as valuePortfolio, valueNow } from './valuation.js';
 import { ALL_ASSET_CLASSES, JURISDICTION, LIQUIDITY, isAssetClass } from './taxonomy.js';
+import { register as loanRegister, totalsOf as loanTotalsOf, viewOf as loanViewOf } from './loan-book.js';
+import { toCsv as loanToCsv, toPdf as loanToPdf } from './loan-export.js';
 import type { Asset, AssetClass, Jurisdiction } from './types.js';
 
 export * from './types.js';
@@ -35,6 +34,20 @@ export {
   isAssetClass,
 } from './taxonomy.js';
 export { days30360, yearFraction, monthsBetween, addCalendarDays } from './daycount.js';
+export {
+  register as loanRegister,
+  viewOf as loanViewOf,
+  sortViews as sortLoanViews,
+  totalsOf as loanTotalsOf,
+  matches as loanMatches,
+  type LoanFilter,
+  type LoanRegister,
+  type LoanSortKey,
+  type LoanStatus,
+  type LoanTotals,
+  type LoanView,
+  type SortDirection,
+} from './loan-book.js';
 export {
   DEFAULT_EQUITY_BANDS,
   taxCharacterFor,
@@ -100,12 +113,12 @@ export const AccrualEngine = {
 /** US-1.7, US-1.15 — portfolio valuation. */
 export const ValuationEngine = { value: valuePortfolio, valueNow };
 
-/* --------------------------------------------------- not yet implemented */
-
-export interface HandLoanLedgerOps {
-  repay(assetId: string, date: IsoDate, principal: MoneyValue): Result<void>;
-}
-
-export const HandLoanLedger: HandLoanLedgerOps = {
-  repay: () => notImplemented('US-1.11', 'HandLoanLedger.repay'),
+/** US-1.11 — the hand-loan register: status, accrual, filtering, totals. */
+export const HandLoanLedger = {
+  register: loanRegister,
+  viewOf: loanViewOf,
+  totalsOf: loanTotalsOf,
 };
+
+/** Requirement 5 — the register as a CSV or PDF the borrower can read. */
+export const LoanExporter = { toCsv: loanToCsv, toPdf: loanToPdf };

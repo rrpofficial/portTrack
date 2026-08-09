@@ -75,3 +75,10 @@ export const TemplateRegistry = {
 
 /** US-4.7 — idempotent re-import. */
 export const DuplicateDetector = { naturalKey, partition };
+
+/**
+ * Opaque references for PII (FR-7.2). Exported so every caller derives a
+ * borrower's reference identically — two different hashes for one person would
+ * split their loans across two identities in the register.
+ */
+export { accountRef, borrowerRef, folioRef } from './provenance.js';
