@@ -186,6 +186,80 @@ export interface Periods {
   readonly calendarYears: readonly CalendarYearOption[];
 }
 
+export type LoanStatus = 'ACTIVE' | 'PARTIALLY_REPAID' | 'REPAID';
+export type LoanSortKey = 'borrowerName' | 'status' | 'loanDate' | 'principal';
+export type PaymentMode = 'CASH' | 'BANK_TRANSFER' | 'UPI' | 'CHEQUE' | 'OTHER';
+
+export interface LoanPaymentView {
+  readonly paymentId?: string;
+  readonly date: string;
+  readonly amount: Money;
+  readonly mode: string;
+  readonly notes: string;
+}
+
+export interface LoanView {
+  readonly loanId: string;
+  readonly borrowerRef: string;
+  readonly borrowerName: string;
+  readonly notes: string;
+  readonly loanDate: string;
+  readonly closedDate?: string;
+  readonly principal: Money;
+  readonly interestRatePct: string;
+  readonly status: LoanStatus;
+  readonly principalRepaid: Money;
+  readonly outstandingPrincipal: Money;
+  readonly totalInterestAccrued: Money;
+  readonly interestPaid: Money;
+  readonly interestBalance: Money;
+  readonly interestPerMonth: Money;
+  readonly totalInterestMonths: number;
+  readonly interestBalanceMonths: string;
+  readonly repayments: readonly LoanPaymentView[];
+  readonly interestPayments: readonly LoanPaymentView[];
+  readonly lastPaymentDate?: string;
+}
+
+export interface LoanTotals {
+  readonly loanCount: number;
+  readonly totalPrincipal: Money;
+  readonly totalOutstanding: Money;
+  readonly totalInterestAccrued: Money;
+  readonly totalInterestPaid: Money;
+  readonly pendingInterestActive: Money;
+  readonly pendingInterestRepaid: Money;
+  readonly pendingInterestTotal: Money;
+}
+
+export interface LoanRegister {
+  readonly loans: readonly LoanView[];
+  readonly totals: LoanTotals;
+  readonly borrowers: readonly string[];
+}
+
+export interface LoanQuery {
+  readonly statuses?: readonly LoanStatus[];
+  readonly borrowers?: readonly string[];
+  readonly sortBy?: LoanSortKey;
+  readonly direction?: 'ASC' | 'DESC';
+}
+
+/** Multi-select filters travel as comma-separated lists. */
+function loanQueryString(query: LoanQuery): string {
+  const params = new URLSearchParams();
+  if (query.statuses !== undefined && query.statuses.length > 0) {
+    params.set('status', query.statuses.join(','));
+  }
+  if (query.borrowers !== undefined && query.borrowers.length > 0) {
+    params.set('borrower', query.borrowers.join(','));
+  }
+  if (query.sortBy !== undefined) params.set('sortBy', query.sortBy);
+  if (query.direction !== undefined) params.set('direction', query.direction);
+  const encoded = params.toString();
+  return encoded.length === 0 ? '' : `?${encoded}`;
+}
+
 export interface TemplateSummary {
   readonly name: string;
   readonly description: string;
@@ -329,6 +403,34 @@ export const api = {
    */
   periods: () => request<Periods>('/reference/periods'),
 
+  loans: (query: LoanQuery = {}) => request<LoanRegister>(`/loans${loanQueryString(query)}`),
+  recordLoan: (input: {
+    borrowerName: string;
+    principal: Money;
+    interestRatePct: string;
+    loanDate: string;
+    notes?: string;
+  }) => request<{ loanId: string }>('/loans', { method: 'POST', body: JSON.stringify(input) }),
+  recordInterestPayment: (
+    loanId: string,
+    input: { date: string; amount: Money; mode: PaymentMode; notes?: string },
+  ) =>
+    request<{ recorded: boolean }>(`/loans/${encodeURIComponent(loanId)}/interest-payments`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  recordPrincipalRepayment: (
+    loanId: string,
+    input: { date: string; amount: Money; mode: PaymentMode; notes?: string },
+  ) =>
+    request<{ recorded: boolean }>(`/loans/${encodeURIComponent(loanId)}/principal-repayments`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  /** Direct hrefs — the browser downloads them, carrying the current filters. */
+  loanCsvUrl: (query: LoanQuery = {}) => `/api/loans/export.csv${loanQueryString(query)}`,
+  loanPdfUrl: (query: LoanQuery = {}) => `/api/loans/export.pdf${loanQueryString(query)}`,
+
   templates: () => request<{ templates: readonly TemplateSummary[] }>('/templates'),
   /** Direct href — the browser downloads it, no JSON round trip. */
   templateUrl: (name: string) => `/api/templates/${encodeURIComponent(name)}`,
@@ -338,6 +440,7 @@ export const api = {
     fileName: string;
     parser: ParserName;
     password?: string;
+    templateName?: string;
   }) =>
     request<ImportReport>('/imports', {
       method: 'POST',

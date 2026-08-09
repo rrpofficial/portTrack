@@ -13,7 +13,15 @@
  * with conditional spreads instead of being assigned `undefined`: the two are
  * genuinely different here, and a column that is NULL must come back absent.
  */
-import { Err, Ok, VaultStateError, type Currency, type Money, type Result } from '@porttrack/shared-kernel';
+import {
+  Err,
+  Money,
+  Ok,
+  VaultStateError,
+  type Currency,
+  type Money as MoneyValue,
+  type Result,
+} from '@porttrack/shared-kernel';
 import type {
   AcquisitionLot,
   Asset,
@@ -28,6 +36,7 @@ import type {
   Liquidity,
   LotAllocation,
   MfSchemeCategory,
+  PaymentMode,
   RateSource,
 } from '@porttrack/core-domain';
 import { Vault } from './vault.js';
@@ -95,6 +104,9 @@ interface ActionRow {
 interface HandLoanRow {
   readonly asset_id: string;
   readonly borrower_ref: string;
+  readonly borrower_name: string | null;
+  readonly notes: string | null;
+  readonly closed_date: string | null;
   readonly principal: string;
   readonly currency: string;
   readonly interest_rate_pct: string;
@@ -103,10 +115,23 @@ interface HandLoanRow {
 }
 
 interface RepaymentRow {
+  readonly repayment_id: string;
   readonly asset_id: string;
   readonly date: string;
   readonly principal: string;
   readonly currency: string;
+  readonly mode: string | null;
+  readonly notes: string | null;
+}
+
+interface InterestPaymentRow {
+  readonly payment_id: string;
+  readonly asset_id: string;
+  readonly date: string;
+  readonly amount: string;
+  readonly currency: string;
+  readonly mode: string;
+  readonly notes: string | null;
 }
 
 interface LiabilityRow {
@@ -118,10 +143,17 @@ interface LiabilityRow {
   readonly as_of: string;
 }
 
-const money = (amount: string, currency: string): Money => ({
-  amount,
-  currency: currency as Currency,
-});
+/**
+ * Canonicalises on the way out of storage.
+ *
+ * The domain assumes every `Money.amount` is a bare decimal string; that was an
+ * assumption rather than an enforced invariant, and a single row written as
+ * `1,00,000` made `new Decimal(...)` throw on EVERY subsequent read — the loan
+ * register returned 500 and the user could not even see which row to fix. This
+ * is where the assumption becomes true.
+ */
+const money = (amount: string, currency: string): MoneyValue =>
+  Money.fromStorage(amount, currency as Currency);
 
 function requireUnlocked(): Result<void> {
   return Vault.isUnlocked() ? Ok(undefined) : Err(new VaultStateError('vault is locked'));
@@ -191,10 +223,17 @@ function toCorporateAction(row: ActionRow): CorporateAction {
   };
 }
 
-function toHandLoan(row: HandLoanRow, repayments: readonly RepaymentRow[]): HandLoan {
+function toHandLoan(
+  row: HandLoanRow,
+  repayments: readonly RepaymentRow[],
+  interestPayments: readonly InterestPaymentRow[],
+): HandLoan {
   return {
     assetId: row.asset_id,
     borrowerRef: row.borrower_ref,
+    ...(row.borrower_name === null ? {} : { borrowerName: row.borrower_name }),
+    ...(row.notes === null ? {} : { notes: row.notes }),
+    ...(row.closed_date === null ? {} : { closedDate: row.closed_date }),
     principal: money(row.principal, row.currency),
     interestRatePct: row.interest_rate_pct,
     interestBasis: row.interest_basis as HandLoan['interestBasis'],
@@ -202,6 +241,16 @@ function toHandLoan(row: HandLoanRow, repayments: readonly RepaymentRow[]): Hand
     repayments: repayments.map((repayment) => ({
       date: repayment.date,
       principal: money(repayment.principal, repayment.currency),
+      paymentId: repayment.repayment_id,
+      ...(repayment.mode === null ? {} : { mode: repayment.mode as PaymentMode }),
+      ...(repayment.notes === null ? {} : { notes: repayment.notes }),
+    })),
+    interestPayments: interestPayments.map((payment) => ({
+      paymentId: payment.payment_id,
+      date: payment.date,
+      amount: money(payment.amount, payment.currency),
+      mode: payment.mode as PaymentMode,
+      ...(payment.notes === null ? {} : { notes: payment.notes }),
     })),
   };
 }
@@ -224,6 +273,14 @@ function hydrate(row: AssetRow): Asset {
       : (db
           .prepare('SELECT * FROM hand_loan_repayments WHERE asset_id = ? ORDER BY date')
           .all(row.asset_id) as RepaymentRow[]);
+  const interestPayments =
+    loan === undefined
+      ? []
+      : (db
+          .prepare(
+            'SELECT * FROM hand_loan_interest_payments WHERE asset_id = ? ORDER BY date, payment_id',
+          )
+          .all(row.asset_id) as InterestPaymentRow[]);
 
   return {
     assetId: row.asset_id,
@@ -238,7 +295,7 @@ function hydrate(row: AssetRow): Asset {
     corporateActions: actions.map(toCorporateAction),
     ...(row.liquidity === null ? {} : { liquidity: row.liquidity as Liquidity }),
     ...(row.position_closed === 1 ? { positionClosed: true } : {}),
-    ...(loan === undefined ? {} : { handLoan: toHandLoan(loan, repayments) }),
+    ...(loan === undefined ? {} : { handLoan: toHandLoan(loan, repayments, interestPayments) }),
     ...(row.scheme_category === null
       ? {}
       : { schemeCategory: row.scheme_category as MfSchemeCategory }),
@@ -285,7 +342,13 @@ function writeAsset(asset: Asset): void {
 
   // Replace-by-aggregate. Diffing children would leave a superseded lot in place
   // whenever one is removed, and a stale lot silently inflates the cost basis.
-  for (const table of ['lots', 'income_events', 'corporate_actions', 'hand_loan_repayments']) {
+  for (const table of [
+    'lots',
+    'income_events',
+    'corporate_actions',
+    'hand_loan_repayments',
+    'hand_loan_interest_payments',
+  ]) {
     db.prepare(`DELETE FROM ${table} WHERE asset_id = ?`).run(asset.assetId);
   }
   db.prepare('DELETE FROM hand_loans WHERE asset_id = ?').run(asset.assetId);
@@ -364,11 +427,15 @@ function writeAsset(asset: Asset): void {
     const loan = asset.handLoan;
     db.prepare(
       `INSERT INTO hand_loans
-         (asset_id, borrower_ref, principal, currency, interest_rate_pct, interest_basis, start_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         (asset_id, borrower_ref, borrower_name, notes, closed_date, principal, currency,
+          interest_rate_pct, interest_basis, start_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       asset.assetId,
       loan.borrowerRef,
+      loan.borrowerName ?? null,
+      loan.notes ?? null,
+      loan.closedDate ?? null,
       loan.principal.amount,
       loan.principal.currency,
       loan.interestRatePct,
@@ -377,18 +444,40 @@ function writeAsset(asset: Asset): void {
     );
 
     const insertRepayment = db.prepare(
-      `INSERT INTO hand_loan_repayments (repayment_id, asset_id, date, principal, currency)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO hand_loan_repayments
+         (repayment_id, asset_id, date, principal, currency, mode, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
     loan.repayments.forEach((repayment, index) => {
       insertRepayment.run(
-        `${asset.assetId}_rep_${String(index).padStart(4, '0')}`,
+        // Keeps its own id where it has one, so a repayment survives a re-save
+        // with the same identity rather than being renumbered by position.
+        repayment.paymentId ?? `${asset.assetId}_rep_${String(index).padStart(4, '0')}`,
         asset.assetId,
         repayment.date,
         repayment.principal.amount,
         repayment.principal.currency,
+        repayment.mode ?? null,
+        repayment.notes ?? null,
       );
     });
+
+    const insertInterest = db.prepare(
+      `INSERT INTO hand_loan_interest_payments
+         (payment_id, asset_id, date, amount, currency, mode, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const payment of loan.interestPayments ?? []) {
+      insertInterest.run(
+        payment.paymentId,
+        asset.assetId,
+        payment.date,
+        payment.amount.amount,
+        payment.amount.currency,
+        payment.mode,
+        payment.notes ?? null,
+      );
+    }
   }
 }
 

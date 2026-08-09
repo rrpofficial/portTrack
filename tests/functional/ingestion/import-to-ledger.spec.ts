@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { ImportStatementUC, LedgerUC, ValuePortfolioUC, resetPorts } from '@porttrack/app-services';
 import { AssetRepository, Vault } from '@porttrack/persistence';
+import { TemplateRegistry } from '@porttrack/ingestion';
 import { expectOk } from '@porttrack/test-kit';
 
 const ROOT = resolve(import.meta.dirname, '../../..');
@@ -187,12 +188,15 @@ describe('Scenario: A portTrack CSV template creates the asset it describes', ()
     expect(assets[0]?.lots[0]?.costPerUnit.amount).toBe('50000');
   });
 
-  it('imports a hand loan with its terms and without the borrower\'s name', async () => {
+  it('imports a hand loan with its terms, identified by an opaque reference', async () => {
+    const header = TemplateRegistry.definitions()
+      .find((template) => template.name === 'Custom_HandLoans')!
+      .columns.join(',');
+
     expectOk(
       await ImportStatementUC.execute({
         file: Buffer.from(
-          'borrower_name,principal_amount,interest_rate_pct,interest_basis,start_date,currency\n' +
-            'Rajesh Sharma,5000000,8.0,SIMPLE,2025-04-01,INR\n',
+          `${header}\nRajesh Sharma,,2025-04-01,,5000000,8.0,INR${','.repeat(18)}\n`,
         ),
         fileName: 'loans.csv',
         parser: 'TEMPLATE',
@@ -204,7 +208,12 @@ describe('Scenario: A portTrack CSV template creates the asset it describes', ()
     expect(assets[0]?.assetClass).toBe('HAND_LOAN');
     expect(assets[0]?.handLoan?.interestBasis).toBe('SIMPLE');
     expect(assets[0]?.handLoan?.principal.amount).toBe('5000000');
-    expect(JSON.stringify(assets)).not.toContain('Rajesh');
+
+    // The name is kept — the register is filtered and sorted by it — but the
+    // ASSET ID, which reaches snapshots and exports, stays the hash.
+    expect(assets[0]?.handLoan?.borrowerName).toBe('Rajesh Sharma');
+    expect(assets[0]?.assetId).not.toContain('rajesh');
+    expect(assets[0]?.assetId).toMatch(/brw_[0-9a-f]{16}/);
   });
 });
 

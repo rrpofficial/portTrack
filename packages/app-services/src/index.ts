@@ -13,6 +13,7 @@ export {
   ImportStatementUC,
   LedgerUC,
   ListSnapshotsUC,
+  LoanUC,
   ReferenceUC,
   TemplateUC,
   ValuePortfolioUC,
@@ -27,7 +28,10 @@ export {
   type CalendarYearOption,
   type FinancialYearOption,
   type GenerateComplianceUCOps,
+  type LoanQuery,
   type Periods,
+  type RecordLoanInput,
+  type RecordPaymentInput,
   type TemplateSummary,
 } from './use-cases.js';
 

@@ -27,6 +27,10 @@ export interface Money {
 
 export interface MoneyOps {
   of(amount: string | number, currency: Currency): Money;
+  /** User input → Money, without throwing. Accepts digit grouping (`1,00,000`). */
+  parse(amount: string | number, currency: Currency): Result<Money>;
+  /** A stored amount → canonical Money. Never throws; unreadable reads as zero. */
+  fromStorage(amount: string, currency: Currency): Money;
   add(a: Money, b: Money): Money;
   subtract(a: Money, b: Money): Money;
   multiply(a: Money, factor: string | number): Money;

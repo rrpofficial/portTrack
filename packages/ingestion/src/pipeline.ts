@@ -26,7 +26,7 @@ async function runParser(input: IngestInput): Promise<Result<ParseOutcome>> {
     case 'ETRADE':
       return parseEtrade(text, input.fileName);
     case 'TEMPLATE': {
-      const parsed = parseTemplateFile(text, input.fileName);
+      const parsed = parseTemplateFile(text, input.fileName, input.templateName);
       // Row errors are carried through, not swallowed: a template is hand-edited,
       // so a typo in one row is the normal case and the user needs to see which.
       return parsed.ok

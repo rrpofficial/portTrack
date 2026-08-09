@@ -57,8 +57,86 @@ const make = (value: InstanceType<typeof D>, currency: Currency): Money => ({
   currency,
 });
 
+/**
+ * Digit grouping, currency symbols and whitespace, removed.
+ *
+ * Someone entering a lakh types `1,00,000`, and a Western export writes
+ * `100,000` — both are the same number and neither is a mistake worth rejecting.
+ * The comma is treated as a SEPARATOR, never as a decimal point: this product is
+ * INR-first and Indian grouping is irregular (`1,00,000`, not `100,000`), so a
+ * locale that means `1,5` to be one-and-a-half is not a reading this can support.
+ * Only `.` is a decimal point.
+ */
+function normaliseAmount(raw: string): string {
+  return raw
+    .trim()
+    .replace(/[₹$£€]/g, '')
+    .replace(/\bRs\.?/gi, '')
+    .replace(/[\s,_]/g, '')
+    .trim();
+}
+
 export const MoneyImpl: MoneyOps = {
   of: (amount, currency) => make(parse(amount, currency), currency),
+
+  /**
+   * Reads user input into Money without throwing.
+   *
+   * `of` throws, which is right for a programming error but wrong for a form
+   * field: an unvalidated string reaching storage is how `1,00,000` got written
+   * into a vault and made an entire register unreadable. Every boundary that
+   * accepts a typed or imported amount goes through here.
+   */
+  parse: (amount, currency) => {
+    const raw = typeof amount === 'number' ? String(amount) : normaliseAmount(amount);
+    if (raw.length === 0) {
+      return { ok: false, error: new InvalidAmountError(`an amount is required`) };
+    }
+    try {
+      const value = new D(raw);
+      if (!value.isFinite()) {
+        return {
+          ok: false,
+          error: new InvalidAmountError(`"${String(amount)}" is not a finite amount`),
+        };
+      }
+      return { ok: true, value: make(value, currency) };
+    } catch {
+      return {
+        ok: false,
+        error: new InvalidAmountError(
+          `"${String(amount)}" is not a valid amount — use digits, with . for decimals`,
+        ),
+      };
+    }
+  },
+
+  /**
+   * Best-effort canonicalisation for a value ALREADY in storage.
+   *
+   * Distinct from `parse` because it cannot fail: a stored amount that will not
+   * read as a number is corrupt, and the only thing worse than showing it wrong
+   * is refusing to show the rest of the ledger at all. Returns zero for anything
+   * unreadable, so one bad row costs that row rather than every read after it.
+   */
+  fromStorage: (amount, currency) => {
+    try {
+      // Already a readable decimal: returned VERBATIM. Canonicalising here would
+      // rewrite "12.50" as "12.5" — same value, different string, and snapshot
+      // content hashes are taken over exactly these strings. Repair only what is
+      // actually broken.
+      new D(amount);
+      return { amount, currency };
+    } catch {
+      // Not readable. Try to recover the number a human meant, and fall back to
+      // zero rather than letting one bad row throw on every later read.
+      try {
+        return make(new D(normaliseAmount(amount)), currency);
+      } catch {
+        return make(new D(0), currency);
+      }
+    }
+  },
 
   add: (a, b) => {
     assertSameCurrency(a, b);

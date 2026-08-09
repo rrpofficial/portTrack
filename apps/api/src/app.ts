@@ -37,6 +37,25 @@ export interface ApiConfig {
 
 export async function buildApp(config: ApiConfig): Promise<ApiApp> {
   const fastify: FastifyInstance = Fastify({ logger: false });
+
+  /*
+   * Last line of defence. A route that throws unexpectedly returned Fastify's
+   * default 500 carrying the raw message — one such response read
+   * `[DecimalError] Invalid argument: 1,00,000`, which exposes an internal
+   * library and a user's amount while telling them nothing they can act on.
+   *
+   * The message is replaced, not the status: a 500 is genuinely a defect here
+   * and must not be dressed up as a client error.
+   */
+  fastify.setErrorHandler((error: { statusCode?: number }, _request, reply) => {
+    void reply.code(error.statusCode ?? 500).send({
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'portTrack could not complete that request. Nothing was changed.',
+      },
+    });
+  });
+
   registerRoutes(fastify);
   await fastify.ready();
 

@@ -1,3 +1,4 @@
-borrower_name,principal_amount,interest_rate_pct,interest_basis,start_date,currency
-Rajesh Sharma,5000000,8.0,SIMPLE,2025-04-01,INR
-Priya Menon,1200000,9.5,SIMPLE,2025-07-15,INR
+borrower_name,notes,loan_date,closed_date,loan_amount,interest_rate_pct,currency,status,principal_repayment_1,principal_date_1,principal_repayment_2,principal_date_2,interest_payment_1,date_1,interest_payment_2,date_2,interest_payment_3,date_3,interest_payment_4,date_4,total_interest_months,interest_balance_months,interest_per_month,total_overall_interest,interest_balance
+Rajesh Sharma,House deposit,2025-04-01,,5000000,8.0,INR,Partially Repaid,1000000,2025-10-01,,,100000,2025-07-01,100000,2025-10-01,,,,,12,,,,
+Priya Menon,Business capital,2025-07-15,,1200000,9.5,INR,Active,,,,,28500,2025-10-15,,,,,,,9,,,,
+Anil Kumar,Repaid in full,2025-01-01,2025-07-01,400000,12,INR,Repaid,400000,2025-07-01,,,,,,,,,,,6,,,,

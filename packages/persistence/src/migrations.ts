@@ -189,6 +189,40 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
+  {
+    version: 5,
+    name: 'hand-loan-register',
+    up: `
+      -- The borrower's real NAME, which the register is filtered and sorted by.
+      -- It lives here, inside the encrypted database, and nowhere else: exports
+      -- and AI payloads continue to carry the opaque borrower_ref.
+      ALTER TABLE hand_loans ADD COLUMN borrower_name TEXT;
+      ALTER TABLE hand_loans ADD COLUMN notes TEXT;
+      -- When the lender considers the loan closed, which is NOT the same as the
+      -- principal being repaid: interest can outlive the principal.
+      ALTER TABLE hand_loans ADD COLUMN closed_date TEXT;
+
+      -- How a repayment arrived, and anything said about it. A spreadsheet kept
+      -- this in a comment column; it is what a disputed payment turns on.
+      ALTER TABLE hand_loan_repayments ADD COLUMN mode TEXT;
+      ALTER TABLE hand_loan_repayments ADD COLUMN notes TEXT;
+
+      -- Interest received, kept in its own table because it does NOT reduce the
+      -- principal. Storing both in one table invites summing them together, and
+      -- that writes off principal silently.
+      CREATE TABLE hand_loan_interest_payments (
+        payment_id TEXT PRIMARY KEY,
+        asset_id   TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE CASCADE,
+        date       TEXT NOT NULL,
+        amount     TEXT NOT NULL,
+        currency   TEXT NOT NULL,
+        mode       TEXT NOT NULL,
+        notes      TEXT
+      );
+      CREATE INDEX idx_hand_loan_interest_asset ON hand_loan_interest_payments(asset_id);
+      CREATE INDEX idx_hand_loan_interest_date ON hand_loan_interest_payments(date);
+    `,
+  },
 ];
 
 const SCHEMA_TABLE = `

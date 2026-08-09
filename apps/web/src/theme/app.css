@@ -254,6 +254,76 @@ body {
   padding: 0;
 }
 
+/* ------------------------------------------------------------------- tiles */
+
+.pt-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--pt-space-3);
+  margin-bottom: var(--pt-space-4);
+}
+
+.pt-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pt-space-1);
+  background: var(--pt-surface-muted);
+  border-radius: var(--pt-radius-control);
+  padding: var(--pt-space-4);
+}
+
+.pt-tile__label { font: var(--pt-text-caption); color: var(--pt-ink-muted); }
+.pt-tile__value { font: var(--pt-text-title); letter-spacing: var(--pt-tracking-tight); }
+.pt-tile__hint { font: var(--pt-text-caption); color: var(--pt-ink-muted); }
+
+/* ------------------------------------------------------------------ status */
+
+/*
+ * Status carries a word as well as a colour — the state of a loan must survive
+ * a colour deficiency (NFR-4), and these hues are the compliance amber and the
+ * semantic gain/loss pair, never the brand accent (ADR-017).
+ */
+.pt-status {
+  display: inline-block;
+  border-radius: var(--pt-radius-chip);
+  padding: var(--pt-space-1) var(--pt-space-3);
+  font: var(--pt-text-caption);
+  white-space: nowrap;
+}
+
+.pt-status--active { background: var(--pt-info-wash); color: var(--pt-info); }
+.pt-status--partially_repaid { background: var(--pt-warn-wash); color: var(--pt-warn); }
+.pt-status--repaid { background: var(--pt-gain-wash); color: var(--pt-gain); }
+
+.pt-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pt-space-2);
+  font: var(--pt-text-body);
+}
+
+/* A selected filter value, clickable to remove it. */
+.pt-chip--removable {
+  border: 1px solid var(--pt-border-strong);
+  cursor: pointer;
+  color: var(--pt-ink);
+}
+
+.pt-chip--removable:hover { background: var(--pt-border-strong); }
+
+.pt-controls__label { font: var(--pt-text-label); color: var(--pt-ink-muted); }
+.pt-controls__spacer { flex: 1 1 auto; }
+
+.pt-controls input[type='search'],
+.pt-controls input[type='text'] {
+  font: var(--pt-text-body);
+  padding: var(--pt-space-2) var(--pt-space-3);
+  border: 1px solid var(--pt-border-strong);
+  border-radius: var(--pt-radius-control);
+  background: var(--pt-surface);
+  color: var(--pt-ink);
+}
+
 /* ------------------------------------------------------------------ tables */
 
 /* Wide tables scroll inside their card; the page itself never scrolls sideways. */

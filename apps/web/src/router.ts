@@ -12,6 +12,10 @@ import { useEffect, useState } from 'react';
 export const SECTIONS = [
   'Dashboard',
   'Ledger',
+  // Its own section rather than a corner of the Ledger: money lent to people is
+  // tracked by who owes it and what they have paid, which is a different shape
+  // from a portfolio of instruments.
+  'Loans',
   'Import',
   'Snapshots',
   'Tax',

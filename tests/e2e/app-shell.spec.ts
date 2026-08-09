@@ -21,6 +21,7 @@ const PASSPHRASE = process.env.PORTTRACK_TEST_PASSPHRASE ?? 'correct horse batte
 const SECTIONS = [
   'Dashboard',
   'Ledger',
+  'Loans',
   'Import',
   'Snapshots',
   'Tax',
@@ -373,8 +374,56 @@ test.describe('US-4.6 Scenario: CSV templates are obtainable from the app', () =
     // The file must be usable as downloaded — guidance comments and all.
     const path = await file.path();
     const contents = readFileSync(path, 'utf8');
-    expect(contents).toContain('borrower_name,principal_amount');
+    expect(contents).toContain('borrower_name,notes,loan_date');
     expect(contents).toContain('# Lines beginning with # are ignored on import');
+  });
+
+  test('offers a template dropdown once portTrack CSV template is chosen', async ({ page }) => {
+    await unlock(page);
+    await goToSection(page, 'Import');
+
+    // Absent for a broker statement — there is no template to choose.
+    await expect(page.getByLabel('Template', { exact: true })).toHaveCount(0);
+
+    await page.getByLabel('Statement type').selectOption('TEMPLATE');
+    const picker = page.getByLabel('Template', { exact: true });
+    await expect(picker).toBeVisible();
+
+    for (const name of [
+      'Custom_HandLoans',
+      'Custom_RealEstate',
+      'Custom_Cash',
+      'Custom_ChitFunds',
+      'Custom_UnlistedShares',
+      'Custom_GenericBroker',
+    ]) {
+      await expect(picker.getByRole('option', { name: new RegExp(name) })).toHaveCount(1);
+    }
+
+    // Choosing one explains what it records and offers that exact file.
+    await picker.selectOption('Custom_Cash');
+    const hint = page.getByTestId('template-hint');
+    await expect(hint).toContainText('bank balance');
+    await expect(hint.getByRole('link', { name: 'Download this template' })).toBeVisible();
+  });
+
+  test('says which columns are wrong when the chosen template does not match', async ({ page }) => {
+    await unlock(page);
+    await goToSection(page, 'Import');
+
+    await page.getByLabel('Statement type').selectOption('TEMPLATE');
+    await page.getByLabel('Template', { exact: true }).selectOption('Custom_Cash');
+    await page.getByLabel('Statement file').setInputFiles({
+      name: 'cash.csv',
+      mimeType: 'text/csv',
+      // `balance` is missing.
+      buffer: Buffer.from('account_label,as_of_date,currency\nSavings,2026-03-31,INR\n'),
+    });
+    await page.getByRole('button', { name: 'Import', exact: true }).click();
+
+    const alert = page.getByRole('alert');
+    await expect(alert).toContainText('balance');
+    await expect(alert).toContainText('Custom_Cash');
   });
 
   test('imports a filled-in template as the asset class it declares', async ({ page }) => {
@@ -396,6 +445,258 @@ test.describe('US-4.6 Scenario: CSV templates are obtainable from the app', () =
 
     await goToSection(page, 'Ledger');
     await expect(page.getByTestId('ledger-table')).toContainText('bank balance');
+  });
+});
+
+test.describe('US-1.11 Scenario: The hand-loan register, end to end', () => {
+  /*
+   * Fixed and distinct per test, so one test's loans cannot satisfy another's
+   * assertions. Deliberately NOT seeded from the clock: recording the same terms
+   * twice is idempotent, so a re-run against an existing vault is harmless, and
+   * a test that reads the wall clock is not reproducible.
+   */
+  const BORROWERS = {
+    journey: 'E2E Journey Borrower',
+    filter: 'E2E Filter Borrower',
+    export: 'E2E Export Borrower',
+    dashboard: 'E2E Dashboard Borrower',
+  } as const;
+
+  async function lend(
+    page: Page,
+    name: string,
+    amount: string,
+    rate = '12',
+    date = '2025-04-01',
+  ): Promise<void> {
+    await page.getByRole('button', { name: 'Record a loan' }).click();
+    const form = page.getByTestId('new-loan-form');
+    await form.getByLabel('Borrower name').fill(name);
+    await form.getByLabel('Loan amount').fill(amount);
+    await form.getByLabel('Interest rate %').fill(rate);
+    await form.getByLabel('Loan date').fill(date);
+    await form.getByRole('button', { name: 'Save loan' }).click();
+    await expect(page.getByTestId('loan-table')).toContainText(name);
+  }
+
+  test('records a loan, takes interest, then takes part of the principal back', async ({ page }) => {
+    await unlock(page);
+    await goToSection(page, 'Loans');
+
+    const name = BORROWERS.journey;
+    await lend(page, name, '1200000');
+
+    // Open the loan's detail.
+    await page.getByRole('button', { name, exact: true }).click();
+    const detail = page.locator('[data-testid^="loan-detail-"]');
+    await expect(detail).toBeVisible();
+
+    /* --------------------------------------------------- interest payment */
+    const interestForm = page.locator('[data-testid^="interest-form-"]');
+    await interestForm.getByLabel('Amount').fill('36000');
+    await interestForm.getByLabel('Date').fill('2025-07-01');
+    await interestForm.getByRole('button', { name: 'Record interest' }).click();
+
+    // The detail stays open across the reload; clicking the borrower again
+    // would toggle it shut.
+    await expect(page.locator('[data-testid^="loan-detail-"]')).toContainText('36,000');
+    // Interest must NOT have reduced the principal.
+    await expect(page.getByTestId('loan-table')).toContainText('12,00,000');
+
+    /* ------------------------------------------------ principal repayment */
+    const principalForm = page.locator('[data-testid^="principal-form-"]');
+    await principalForm.getByLabel('Amount').fill('600000');
+    await principalForm.getByLabel('Date').fill('2025-10-01');
+    await principalForm.getByRole('button', { name: 'Record repayment' }).click();
+
+    // Status follows the principal, and outstanding halves.
+    await expect(page.getByTestId('loan-table')).toContainText('Partially repaid');
+    await expect(page.getByTestId('loan-table')).toContainText('6,00,000');
+  });
+
+  test('splits pending interest between live loans and repaid principal', async ({ page }) => {
+    await unlock(page);
+    await goToSection(page, 'Loans');
+
+    // Both tiles exist and are distinguishable — the whole point of the split.
+    await expect(page.getByTestId('tile-pending-active')).toBeVisible();
+    await expect(page.getByTestId('tile-pending-repaid')).toBeVisible();
+    await expect(page.getByTestId('tile-total-lent')).toContainText('₹');
+    await expect(page.getByTestId('tile-outstanding')).toContainText('₹');
+  });
+
+  test('filters by status and by borrower, and re-totals as it goes', async ({ page }) => {
+    await unlock(page);
+    await goToSection(page, 'Loans');
+
+    const name = BORROWERS.filter;
+    await lend(page, name, '750000');
+
+    const table = page.getByTestId('loan-table');
+    await expect(table).toContainText(name);
+
+    // A status the loan cannot have empties the table...
+    await page.getByRole('checkbox', { name: 'Repaid', exact: true }).check();
+    await expect(table).not.toContainText(name);
+
+    // ...and clearing it brings the loan back. "No filter" means all, not none.
+    await page.getByRole('checkbox', { name: 'Repaid', exact: true }).uncheck();
+    await expect(table).toContainText(name);
+
+    // By id: every borrower CHECKBOX is labelled with a name, and those names
+    // contain the word "Borrower", so a by-label lookup is ambiguous here.
+    await page.locator('#borrower-search').fill('nobody-by-this-name');
+    await expect(page.getByTestId('loan-empty')).toBeVisible();
+    await expect(page.getByTestId('tile-total-lent')).toContainText('₹0');
+  });
+
+  test('filters by borrower through a dropdown, not a checkbox per person', async ({ page }) => {
+    await unlock(page);
+    await goToSection(page, 'Loans');
+
+    const name = BORROWERS.filter;
+    await lend(page, name, '750000');
+
+    // A checkbox per borrower is unusable once there are many; the list is a
+    // dropdown and each choice becomes a removable chip.
+    await page.getByLabel('Add', { exact: true }).selectOption(name);
+    await expect(page.getByTestId('borrower-chips')).toContainText(name);
+    await expect(page.getByTestId('loan-table')).toContainText(name);
+
+    // The chosen borrower leaves the dropdown, so they cannot be added twice.
+    await expect(
+      page.getByLabel('Add', { exact: true }).getByRole('option', { name, exact: true }),
+    ).toHaveCount(0);
+
+    await page.getByRole('button', { name: `Remove ${name} from the filter` }).click();
+    await expect(page.getByTestId('borrower-chips')).toHaveCount(0);
+  });
+
+  test('shows loans in the Ledger as receivables, not as empty holdings', async ({ page }) => {
+    await unlock(page);
+    await goToSection(page, 'Loans');
+    await lend(page, BORROWERS.journey, '1200000');
+
+    await goToSection(page, 'Ledger');
+    const receivables = page.getByTestId('loans-receivable-table');
+    await expect(receivables).toBeVisible();
+
+    // The borrower's name, not the raw asset id it used to fall back to.
+    await expect(receivables).toContainText(BORROWERS.journey);
+    await expect(receivables).not.toContainText('ast_hand_loan_');
+
+    // And a loan must never appear in Holdings, where every column is
+    // meaningless for a receivable: 0 lots, 0 held, ₹0 cost.
+    const holdings = page.getByTestId('ledger-table');
+    if ((await holdings.count()) > 0) {
+      await expect(holdings).not.toContainText(BORROWERS.journey);
+    }
+  });
+
+  test('a loan recorded now shows on the Dashboard without a reload', async ({ page }) => {
+    await unlock(page);
+
+    await goToSection(page, 'Dashboard');
+    const netWorth = page.getByTestId('net-worth');
+    const before = (await netWorth.textContent()) ?? '';
+
+    await goToSection(page, 'Loans');
+    await lend(page, BORROWERS.dashboard, '500000');
+
+    await goToSection(page, 'Dashboard');
+    /*
+     * The exact reported failure: the valuation was fetched once at unlock, so
+     * the Dashboard sat at ₹0 while Loans and Ledger showed the money. Opening
+     * the tab must re-value.
+     */
+    await expect(netWorth).not.toHaveText(before);
+    await expect(page.getByTestId('allocation-breakdown')).toContainText('hand loan');
+  });
+
+  test('says when it was valued, rather than claiming to be live', async ({ page }) => {
+    await unlock(page);
+    await goToSection(page, 'Dashboard');
+
+    // A "Live" badge asserted freshness the screen did not have.
+    await expect(page.getByTestId('revalue')).toContainText(/as at|Refresh/);
+    await page.getByTestId('revalue').click();
+    await expect(page.getByTestId('revalue')).toContainText(/as at/);
+  });
+
+  test('sorts by each field the register offers', async ({ page }) => {
+    await unlock(page);
+    await goToSection(page, 'Loans');
+
+    for (const option of ['Borrower', 'Status', 'Loan date', 'Amount']) {
+      await page.getByLabel('Sort by').selectOption({ label: option });
+      await expect(page.getByTestId('loan-table')).toBeVisible();
+    }
+    // Direction toggles rather than being a second control to forget.
+    await page.getByRole('button', { name: 'Descending' }).click();
+    await expect(page.getByRole('button', { name: 'Ascending' })).toBeVisible();
+  });
+
+  test('exports the register as CSV and as PDF', async ({ page }) => {
+    await unlock(page);
+    await goToSection(page, 'Loans');
+    await lend(page, BORROWERS.export, '250000');
+
+    const csv = page.waitForEvent('download');
+    await page.getByRole('link', { name: 'Export CSV' }).click();
+    const csvFile = await csv;
+    expect(csvFile.suggestedFilename()).toBe('hand-loans.csv');
+    const csvText = readFileSync(await csvFile.path(), 'utf8');
+    expect(csvText).toContain('Borrower Name');
+    expect(csvText).toContain('PENDING INTEREST — PRINCIPAL REPAID');
+
+    const pdf = page.waitForEvent('download');
+    await page.getByRole('link', { name: 'Export PDF' }).click();
+    const pdfFile = await pdf;
+    expect(pdfFile.suggestedFilename()).toBe('hand-loans.pdf');
+    const pdfBytes = readFileSync(await pdfFile.path());
+    // A real PDF, not an error page with a .pdf name.
+    expect(pdfBytes.subarray(0, 8).toString('latin1')).toBe('%PDF-1.4');
+    expect(pdfBytes.toString('latin1')).toContain('Hand Loan Register');
+  });
+});
+
+test.describe('US-4.6 Scenario: The hand-loan template carries the full register', () => {
+  test('imports a spreadsheet with payments and repayment history', async ({ page }) => {
+    await unlock(page);
+    await goToSection(page, 'Import');
+
+    const header = await page.evaluate(async () => {
+      const response = await fetch('/api/templates');
+      const body = (await response.json()) as {
+        templates: { name: string; columns: string[] }[];
+      };
+      return body.templates.find((t) => t.name === 'Custom_HandLoans')?.columns.join(',') ?? '';
+    });
+    expect(header).toContain('interest_payment_1');
+    expect(header).toContain('principal_repayment_1');
+    expect(header).toContain('closed_date');
+
+    const name = 'E2E Sheet Import Borrower';
+    const row =
+      `${name},House deposit,2025-04-01,,1200000,12,INR,Partially Repaid,` +
+      `600000,2025-10-01,,,36000,2025-07-01,,,,,,,,,,,`;
+
+    await page.getByLabel('Statement type').selectOption('TEMPLATE');
+    await page.getByLabel('Statement file').setInputFiles({
+      name: 'loans.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from(`${header}\n${row}\n`),
+    });
+    await page.getByRole('button', { name: 'Import', exact: true }).click();
+    await expect(page.getByTestId('import-summary')).toBeVisible();
+    await expect(page.getByTestId('import-unapplied')).toHaveCount(0);
+
+    // The imported history must reach the register, not just the ledger.
+    await goToSection(page, 'Loans');
+    const table = page.getByTestId('loan-table');
+    await expect(table).toContainText(name);
+    await expect(table).toContainText('Partially repaid');
+    await expect(table).toContainText('6,00,000');
   });
 });
 

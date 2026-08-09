@@ -34,6 +34,7 @@ function toBase64(buffer: ArrayBuffer): string {
 export function Import({ onImported }: { onImported: () => void }) {
   const [file, setFile] = useState<File | undefined>();
   const [parser, setParser] = useState<ParserName>('ZERODHA_TRADEBOOK');
+  const [templateName, setTemplateName] = useState('');
   const [password, setPassword] = useState('');
   const [report, setReport] = useState<ImportReport | undefined>();
   const [error, setError] = useState<string | undefined>();
@@ -61,6 +62,8 @@ export function Import({ onImported }: { onImported: () => void }) {
       fileName: file.name,
       parser,
       ...(password.length === 0 ? {} : { password }),
+      // Only meaningful for a template import; blank means "detect".
+      ...(parser !== 'TEMPLATE' || templateName.length === 0 ? {} : { templateName }),
     });
 
     setBusy(false);
@@ -72,7 +75,9 @@ export function Import({ onImported }: { onImported: () => void }) {
     setPassword('');
     setReport(result.value);
     onImported();
-  }, [file, parser, password, onImported]);
+  }, [file, parser, templateName, password, onImported]);
+
+  const selectedTemplate = templates.find((template) => template.name === templateName);
 
   function onSubmit(event: SyntheticEvent): void {
     event.preventDefault();
@@ -106,6 +111,43 @@ export function Import({ onImported }: { onImported: () => void }) {
               </option>
             ))}
           </select>
+
+          {parser === 'TEMPLATE' && (
+            <>
+              {/*
+                Which template, not just "a template". Naming it turns a generic
+                "this matches no portTrack template" into a diff of the exact
+                columns at fault, and catches a Hand Loans file uploaded under
+                Cash — which would otherwise import cleanly as the wrong asset
+                class. Left on "detect" it still works; the header decides.
+              */}
+              <label htmlFor="template">Template</label>
+              <select
+                id="template"
+                value={templateName}
+                onChange={(event) => {
+                  setTemplateName(event.target.value);
+                }}
+              >
+                <option value="">Detect from the file's header</option>
+                {templates.map((template) => (
+                  <option key={template.name} value={template.name}>
+                    {template.name} — {template.description}
+                  </option>
+                ))}
+              </select>
+
+              {selectedTemplate !== undefined && (
+                <p className="pt-muted" data-testid="template-hint">
+                  Records <strong>{selectedTemplate.assetClass.replaceAll('_', ' ').toLowerCase()}</strong>.{' '}
+                  {selectedTemplate.guidance}{' '}
+                  <a href={api.templateUrl(selectedTemplate.name)} download>
+                    Download this template
+                  </a>
+                </p>
+              )}
+            </>
+          )}
 
           <label htmlFor="statement">Statement file</label>
           <input id="statement" type="file" onChange={onFile} />

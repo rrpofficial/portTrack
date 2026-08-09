@@ -12,9 +12,9 @@ local-first, privacy-first, containerized.
 ## Current status — all milestones complete
 
 ```
-unit + functional   613 passing   0 failing   0 skipped
+unit + functional   705 passing   0 failing   0 skipped
 container (Docker)   38 passing   0 failing
-E2E (Playwright)     28 passing   0 failing
+E2E (Playwright)     41 passing   0 failing
 typecheck  clean     docker compose up ✓
 ```
 
@@ -57,7 +57,7 @@ download a template from **Import → Manual entry**, fill it in a spreadsheet, 
 
 | Template | Records | Key columns |
 |---|---|---|
-| `Custom_HandLoans` | Money lent to friends or family | `borrower_name`, `principal_amount`, `interest_rate_pct`, `interest_basis`, `start_date` |
+| `Custom_HandLoans` | Loans, with repayment and interest history | `borrower_name`, `notes`, `loan_date`, `closed_date`, `loan_amount`, `interest_rate_pct`, `status`, two `principal_repayment_n`/`principal_date_n` pairs, four `interest_payment_n`/`date_n` pairs |
 | `Custom_RealEstate` | Land and buildings, at cost | `property_name`, `purchase_date`, `purchase_price`, `stamp_duty`, `registration_fee` |
 | `Custom_Cash` | Cash and bank balances | `account_label`, `as_of_date`, `balance` |
 | `Custom_ChitFunds` | Chit funds and savings schemes | `scheme_name`, `start_date`, `monthly_instalment`, `total_months` |
@@ -68,13 +68,35 @@ The same files are committed at [`templates/`](./templates), generated from the 
 definitions by `npx tsx scripts/emit-templates.mts` — so the header you fill in and the header the
 importer matches against can never drift apart.
 
+Choosing **portTrack CSV template** as the statement type reveals a second dropdown listing the six
+templates. Leave it on *Detect from the file's header* and the header decides, as before. Naming one
+buys a better failure: a mismatch then reports the exact columns at fault —
+
+```
+Custom_Cash template header mismatch — missing column(s): balance
+```
+
+— rather than `this header matches no portTrack template: …`. It also catches a Hand Loans file
+uploaded under Cash, which would otherwise import cleanly as the wrong asset class, and therefore
+under the wrong tax treatment.
+
+The hand-loan template also accepts the five **derived** columns a tracking sheet keeps —
+`status`, `total_interest_months`, `interest_balance_months`, `interest_per_month`,
+`total_overall_interest`, `interest_balance` — so an existing spreadsheet pastes in unchanged. They
+are **recomputed**, not trusted: where a stated figure disagrees with the computed one the import
+reports it rather than silently overriding either. A sheet that says only *"Repaid"*, with no
+repayment row, has the repayment reconstructed on its closing date — otherwise the loan would show
+its full principal outstanding, contradicting its own status.
+
 **The template is identified by its header row**, which is why the header must stay exactly as
 downloaded. Each template declares the asset class it holds; nothing is inferred from the file, since
 asset class drives tax treatment and a wrong guess would be invisible. The `#` guidance lines at the
 top are ignored on import — fill the file in and upload it as-is.
 
-> `borrower_name` is hashed to an opaque reference the moment it is parsed. The raw name exists only
-> inside your encrypted vault, never in a payload, a log line or an export.
+> `borrower_name` is hashed to an opaque reference that identifies the loan; the name itself is kept
+> in your encrypted vault so the register can be filtered and sorted by it. It never appears in an
+> AI payload or a log line. A **loan export you ask for does carry it** — that is what makes the file
+> readable to the accountant or borrower you hand it to.
 
 ### Unlocking takes a moment, on purpose
 
@@ -89,6 +111,46 @@ so the rest of the API stays responsive: a health probe issued mid-unlock return
 > A browser tab left open on the unlock screen will re-submit as soon as the API comes back. If you
 > are deliberately wiping `data/`, close or reload that tab first, or it will recreate the vault
 > under its old passphrase before you get there.
+
+### Loans — the hand-loan register
+
+A dedicated **Loans** tab replaces a hand-loan tracking spreadsheet. Record a loan, take interest
+against it, take part of the principal back, and see what is still owed.
+
+| It tracks | Because |
+|---|---|
+| Several loans to one borrower | Same day, different days, different years — each keeps its own rate and dates |
+| Interest payments, unlimited | A spreadsheet had four columns and lost the fifth |
+| Partial principal repayments | Interest accrues on the **declining balance** from the repayment date |
+| Payment mode and notes | What a disputed payment turns on |
+| Status: active / partially repaid / repaid | Derived from the principal, never typed in |
+
+**Two tiles for pending interest, not one.** Interest owed on a loan whose principal has already
+come back has no repayment arriving alongside it, so it is the balance most easily forgotten. Folded
+into a single figure it disappears inside the larger number for live loans.
+
+**The tiles describe the filtered set.** Filter to one borrower and the totals become that
+borrower's. Filter by any combination of status and borrower; sort by borrower, status, loan date or
+amount; export what you are looking at as **CSV or PDF**.
+
+Everything is computed by the API, never in the browser — summing decimal strings in JavaScript
+would reintroduce the float drift ADR-002 exists to prevent, and these are amounts someone owes you.
+
+**A live loan counts toward net worth** as outstanding principal plus the interest **still owed**.
+Interest already received is deliberately excluded: that money is sitting in a bank account, and
+counting it again as a receivable would report it twice.
+
+Loans appear in the **Ledger** under *Loans receivable*, not under Holdings. A loan is a receivable,
+not a holding of units — it has no lots, no quantity and no cost per unit — so it is carried at
+principal outstanding plus interest owed, and those carrying values sum to exactly the hand-loan
+figure in net worth.
+
+Amounts can be typed the way you write them — `1,00,000`, `100,000`, `₹1,00,000` all read as one
+lakh. A comma is always a digit separator, never a decimal point.
+
+> Borrower **names** live in the encrypted vault because the register is filtered and sorted by them.
+> Anything that leaves this machine carries the opaque `borrowerRef` instead — except an export you
+> ask for by name, which necessarily carries the name, since that is what makes it readable.
 
 ### Where your data lives
 

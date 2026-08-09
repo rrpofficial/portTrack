@@ -62,6 +62,21 @@ function describesEveryLot(asset: Asset): boolean {
   return asset.lots.length <= 1;
 }
 
+/**
+ * Interest accrued but not yet received — the part that is still a receivable.
+ *
+ * Clamped at zero: a borrower who has overpaid interest is not an extra asset,
+ * and a negative here would quietly reduce net worth.
+ */
+function unpaidInterest(loan: NonNullable<Asset['handLoan']>, asOf: string): MoneyValue {
+  const accrued = handLoanAccruedInterest(loan, asOf);
+  const paid = Money.sum(
+    (loan.interestPayments ?? []).map((payment) => payment.amount),
+    accrued.currency,
+  );
+  return Money.compare(paid, accrued) >= 0 ? Money.zero(accrued.currency) : Money.subtract(accrued, paid);
+}
+
 function heldQuantity(asset: Asset): string {
   return asset.lots
     .reduce((sum, lot) => sum.plus(lot.remainingQuantity), new Decimal(0))
@@ -121,10 +136,16 @@ export function value(input: ValuationInput): PortfolioValuation {
     let navSource: ValuedPosition['navSource'];
 
     if (asset.assetClass === 'HAND_LOAN' && asset.handLoan && describesEveryLot(asset)) {
-      // ONE loan: its cost basis is the principal still owed, and its value is
-      // that principal plus interest accrued to the valuation date.
+      /*
+       * ONE loan. Its cost basis is the principal still owed, and its value is
+       * that principal plus the interest still OUTSTANDING.
+       *
+       * Outstanding, not accrued: interest the borrower has already paid is now
+       * cash in a bank account, and counting it here as well would report it
+       * twice. The receivable is what has not arrived.
+       */
       costBasis = handLoanOutstandingPrincipal(asset.handLoan, asOfDate);
-      native = Money.add(costBasis, handLoanAccruedInterest(asset.handLoan, asOfDate));
+      native = Money.add(costBasis, unpaidInterest(asset.handLoan, asOfDate));
     } else {
       const { value: marketValue, quote } = marketValueOf(asset, quantity, asOfDate, input.prices);
       native = marketValue;

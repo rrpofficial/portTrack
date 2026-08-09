@@ -17,6 +17,7 @@
  *     fee into some arbitrary lot would invent a cost basis, and an invented cost
  *     basis is indistinguishable from a real one once it is stored.
  */
+import { createHash } from 'node:crypto';
 import { Money, Ok, type Result } from '@porttrack/shared-kernel';
 import {
   AssetRegistry,
@@ -29,7 +30,7 @@ import {
   type ExitTransaction,
   type IncomeEvent,
 } from '@porttrack/core-domain';
-import type { ParsedTransaction, ParserName } from './types.js';
+import type { ParsedTransaction, ParserName, ReconciliationNote } from './types.js';
 
 /** A row that parsed cleanly but could not be placed on the ledger. */
 export interface UnappliedTransaction {
@@ -45,6 +46,8 @@ export interface LedgerProjection {
   /** Disposals, recorded so they are neither re-applied nor lost to tax. */
   readonly exits: readonly ExitTransaction[];
   readonly unapplied: readonly UnappliedTransaction[];
+  /** Figures the source stated that this recomputed differently. */
+  readonly reconciliation: readonly ReconciliationNote[];
 }
 
 /**
@@ -147,6 +150,77 @@ function draftFor(
   return draft;
 }
 
+/** Deterministic, so re-importing the same sheet does not duplicate a payment. */
+function paymentIdFor(assetId: string, prefix: string, date: string, amount: string): string {
+  return `${prefix}_${createHash('sha256')
+    .update([assetId, date, amount].join('|'))
+    .digest('hex')
+    .slice(0, 16)}`;
+}
+
+/**
+ * Builds the loan, including a repayment the source had no column for.
+ *
+ * A spreadsheet that tracks status as a word records "Repaid" without recording
+ * WHEN or HOW MUCH principal came back. Importing the word alone would leave the
+ * loan showing its full principal outstanding forever, contradicting the sheet
+ * it came from. Where a row says Repaid and lists no principal repayment, a full
+ * repayment is reconstructed on the closing date — or on the loan date if none
+ * is given, which accrues no interest and is the conservative reading.
+ */
+function handLoanFrom(
+  assetId: string,
+  transaction: ParsedTransaction,
+  parsed: NonNullable<ParsedTransaction['handLoan']>,
+): NonNullable<Asset['handLoan']> {
+  const repayments = parsed.principalRepayments.map((payment) => ({
+    date: payment.date,
+    principal: payment.amount,
+    paymentId: paymentIdFor(assetId, 'rep', payment.date, payment.amount.amount),
+    mode: 'OTHER' as const,
+  }));
+
+  const declaredRepaid = parsed.declaredStatus === 'REPAID';
+  const alreadyCovered = repayments.some((repayment) =>
+    Money.compare(repayment.principal, transaction.pricePerUnit) >= 0,
+  );
+
+  if (declaredRepaid && !alreadyCovered) {
+    const settledOn = parsed.closedDate ?? parsed.startDate;
+    const outstanding = repayments.reduce(
+      (remaining, repayment) => Money.subtract(remaining, repayment.principal),
+      transaction.pricePerUnit,
+    );
+    if (Money.compare(outstanding, Money.zero(outstanding.currency)) > 0) {
+      repayments.push({
+        date: settledOn,
+        principal: outstanding,
+        paymentId: paymentIdFor(assetId, 'rep', settledOn, outstanding.amount),
+        mode: 'OTHER' as const,
+      });
+    }
+  }
+
+  return {
+    assetId,
+    borrowerRef: parsed.borrowerRef,
+    borrowerName: parsed.borrowerName,
+    principal: transaction.pricePerUnit,
+    interestRatePct: parsed.interestRatePct,
+    interestBasis: parsed.interestBasis,
+    startDate: parsed.startDate,
+    ...(parsed.closedDate === undefined ? {} : { closedDate: parsed.closedDate }),
+    ...(parsed.notes === undefined ? {} : { notes: parsed.notes }),
+    repayments,
+    interestPayments: parsed.interestPayments.map((payment) => ({
+      paymentId: paymentIdFor(assetId, 'int', payment.date, payment.amount.amount),
+      date: payment.date,
+      amount: payment.amount,
+      mode: 'OTHER' as const,
+    })),
+  };
+}
+
 const ACQUISITION_KINDS = new Set<ParsedTransaction['kind']>([
   'BUY',
   'RSU_VEST',
@@ -173,6 +247,7 @@ export function projectToLedger(input: {
 
   const exits: ExitTransaction[] = [];
   const seenExits = new Set((input.existingExits ?? []).map((exit) => exit.txnId));
+  const reconciliation: ReconciliationNote[] = [];
 
   const unapplied: UnappliedTransaction[] = [];
   const reject = (transaction: ParsedTransaction, reason: string): void => {
@@ -209,18 +284,33 @@ export function projectToLedger(input: {
       // Loan terms arrive with the row that opens the loan, and belong to the
       // asset rather than to a lot.
       if (transaction.handLoan !== undefined && draft.asset.handLoan === undefined) {
-        draft.asset = {
-          ...draft.asset,
-          handLoan: {
-            assetId,
-            borrowerRef: transaction.handLoan.borrowerRef,
-            principal: transaction.pricePerUnit,
-            interestRatePct: transaction.handLoan.interestRatePct,
-            interestBasis: transaction.handLoan.interestBasis,
-            startDate: transaction.handLoan.startDate,
-            repayments: [],
-          },
-        };
+        const loan = handLoanFrom(assetId, transaction, transaction.handLoan);
+        draft.asset = { ...draft.asset, handLoan: loan };
+
+        // The status the sheet stated, checked against the one the repayments
+        // imply. Neither overwrites the other; the disagreement is reported.
+        const declared = transaction.handLoan.declaredStatus;
+        if (declared !== undefined) {
+          const repaid = loan.repayments.reduce(
+            (sum, repayment) => Money.add(sum, repayment.principal),
+            Money.zero(loan.principal.currency),
+          );
+          const computed =
+            Money.compare(repaid, loan.principal) >= 0
+              ? 'REPAID'
+              : loan.repayments.length > 0
+                ? 'PARTIALLY_REPAID'
+                : 'ACTIVE';
+
+          if (computed !== declared) {
+            reconciliation.push({
+              row: transaction.provenance.sourceRow,
+              field: 'status',
+              stated: declared,
+              computed,
+            });
+          }
+        }
       }
 
       const lot = LotBook.recordAcquisition({
@@ -326,7 +416,7 @@ export function projectToLedger(input: {
     incomeEvents: draft.income,
   }));
 
-  return Ok({ assets, exits, unapplied });
+  return Ok({ assets, exits, unapplied, reconciliation });
 }
 
 /** The acquisition kind a stored lot must have come from. */

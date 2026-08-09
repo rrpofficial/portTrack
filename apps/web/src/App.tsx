@@ -18,6 +18,7 @@ import { Compliance } from './views/Compliance.js';
 import { Dashboard } from './views/Dashboard.js';
 import { Import } from './views/Import.js';
 import { Ledger } from './views/Ledger.js';
+import { Loans } from './views/Loans.js';
 import { Settings } from './views/Settings.js';
 import { Snapshots } from './views/Snapshots.js';
 import { Tax } from './views/Tax.js';
@@ -28,16 +29,32 @@ export function App() {
   const [error, setError] = useState<string | undefined>();
   const [unlocking, setUnlocking] = useState(false);
   const [valuation, setValuation] = useState<Valuation | undefined>();
+  const [valuedAt, setValuedAt] = useState<string | undefined>();
+  const [valuing, setValuing] = useState(false);
   const section = useSection();
 
   const refresh = useCallback(async () => {
+    setValuing(true);
     const result = await api.valuation();
-    if (result.ok) setValuation(result.value);
+    if (result.ok) {
+      setValuation(result.value);
+      setValuedAt(new Date().toLocaleTimeString());
+    }
+    setValuing(false);
   }, []);
 
+  /*
+   * Re-valued every time the Dashboard is opened, not once at unlock.
+   *
+   * The valuation was fetched a single time and then held for the session, so
+   * anything recorded afterwards — a loan, an import, a payment — left the
+   * Dashboard showing ₹0 while the Ledger and Loans tabs showed the money. Two
+   * screens disagreeing about net worth is worse than either being briefly
+   * stale, and the tab change is the natural moment to reconcile them.
+   */
   useEffect(() => {
-    if (unlocked) void refresh();
-  }, [unlocked, refresh]);
+    if (unlocked && section === 'Dashboard') void refresh();
+  }, [unlocked, section, refresh]);
 
   /**
    * Unlocking is SLOW by design — Argon2id at the OWASP baseline takes a few
@@ -147,8 +164,18 @@ export function App() {
       </header>
 
       <main>
-        {section === 'Dashboard' && <Dashboard valuation={valuation} />}
+        {section === 'Dashboard' && (
+          <Dashboard
+            valuation={valuation}
+            valuedAt={valuedAt}
+            valuing={valuing}
+            onRefresh={() => void refresh()}
+          />
+        )}
         {section === 'Ledger' && <Ledger />}
+        {section === 'Loans' && <Loans />}
+        {/* Also re-valued after an import, so the Dashboard is already correct
+            by the time the user navigates back to it. */}
         {section === 'Import' && <Import onImported={() => void refresh()} />}
         {section === 'Snapshots' && <Snapshots />}
         {section === 'Tax' && <Tax />}

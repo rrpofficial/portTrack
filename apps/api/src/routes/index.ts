@@ -20,6 +20,8 @@ import {
   ImportStatementUC,
   LedgerUC,
   ListSnapshotsUC,
+  LoanUC,
+  type LoanQuery,
   ReferenceUC,
   TemplateUC,
   ValuePortfolioUC,
@@ -89,6 +91,132 @@ export function registerRoutes(app: FastifyInstance): void {
     return reply.send({ assets, liabilities, exits });
   });
 
+  /* -------------------------------------------------------------- loans */
+
+  const loanQuery = (query: unknown): LoanQuery => {
+    const raw = query as {
+      status?: string;
+      borrower?: string;
+      sortBy?: string;
+      direction?: string;
+      asOf?: string;
+    };
+    // Comma-separated, because several statuses and several borrowers can be
+    // selected at once (requirement 4).
+    const list = (value: string | undefined) =>
+      value === undefined || value.length === 0 ? undefined : value.split(',').filter(Boolean);
+
+    const statuses = list(raw.status) as LoanQuery['statuses'];
+    const borrowers = list(raw.borrower);
+
+    return {
+      ...(statuses === undefined ? {} : { statuses }),
+      ...(borrowers === undefined ? {} : { borrowers }),
+      ...(raw.sortBy === undefined ? {} : { sortBy: raw.sortBy as LoanQuery['sortBy'] }),
+      ...(raw.direction === undefined
+        ? {}
+        : { direction: raw.direction as LoanQuery['direction'] }),
+      ...(raw.asOf === undefined ? {} : { asOf: raw.asOf }),
+    };
+  };
+
+  app.get('/api/loans', async (request, reply) => {
+    const result = await LoanUC.register(loanQuery(request.query));
+    return result.ok
+      ? reply.send(result.value)
+      : reply.code(409).send(failure(result.error.code, result.error.message));
+  });
+
+  app.post('/api/loans', async (request, reply) => {
+    const body = request.body as {
+      borrowerName?: string;
+      principal?: { amount?: string; currency?: string };
+      interestRatePct?: string;
+      loanDate?: string;
+      notes?: string;
+    };
+
+    const result = await LoanUC.record({
+      borrowerName: body.borrowerName ?? '',
+      principal: {
+        amount: body.principal?.amount ?? '0',
+        currency: (body.principal?.currency ?? 'INR') as 'INR',
+      },
+      interestRatePct: body.interestRatePct ?? '0',
+      loanDate: body.loanDate ?? '',
+      ...(body.notes === undefined ? {} : { notes: body.notes }),
+    });
+    return result.ok
+      ? reply.code(201).send({ loanId: result.value })
+      : reply.code(422).send(failure(result.error.code, result.error.message));
+  });
+
+  const paymentBody = (id: string, body: unknown) => {
+    const raw = body as {
+      date?: string;
+      amount?: { amount?: string; currency?: string };
+      mode?: string;
+      notes?: string;
+    };
+    return {
+      loanId: id,
+      date: raw.date ?? '',
+      amount: {
+        amount: raw.amount?.amount ?? '0',
+        currency: (raw.amount?.currency ?? 'INR') as 'INR',
+      },
+      mode: (raw.mode ?? 'OTHER') as Parameters<typeof LoanUC.recordInterestPayment>[0]['mode'],
+      ...(raw.notes === undefined ? {} : { notes: raw.notes }),
+    };
+  };
+
+  // Two routes, not one with a `type` flag: an interest payment that reduced
+  // the principal would silently write off money owed, and a single endpoint
+  // makes that a one-character mistake.
+  app.post<{ Params: { id: string } }>(
+    '/api/loans/:id/interest-payments',
+    async (request, reply) => {
+      const result = await LoanUC.recordInterestPayment(
+        paymentBody(request.params.id, request.body),
+      );
+      return result.ok
+        ? reply.code(201).send({ recorded: true })
+        : reply.code(422).send(failure(result.error.code, result.error.message));
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/api/loans/:id/principal-repayments',
+    async (request, reply) => {
+      const result = await LoanUC.recordPrincipalRepayment(
+        paymentBody(request.params.id, request.body),
+      );
+      return result.ok
+        ? reply.code(201).send({ recorded: true })
+        : reply.code(422).send(failure(result.error.code, result.error.message));
+    },
+  );
+
+  app.get('/api/loans/export.csv', async (request, reply) => {
+    const result = await LoanUC.exportCsv(loanQuery(request.query));
+    return result.ok
+      ? reply
+          .header('content-type', 'text/csv; charset=utf-8')
+          .header('content-disposition', 'attachment; filename="hand-loans.csv"')
+          .send(result.value)
+      : reply.code(409).send(failure(result.error.code, result.error.message));
+  });
+
+  app.get('/api/loans/export.pdf', async (request, reply) => {
+    const result = await LoanUC.exportPdf(loanQuery(request.query));
+    return result.ok
+      ? reply
+          .header('content-type', 'application/pdf')
+          .header('content-disposition', 'attachment; filename="hand-loans.pdf"')
+          .send(Buffer.from(result.value))
+      : reply.code(409).send(failure(result.error.code, result.error.message));
+  });
+
   /* ---------------------------------------------------------- snapshots */
 
   app.get('/api/snapshots', async (_request, reply) =>
@@ -153,7 +281,14 @@ export function registerRoutes(app: FastifyInstance): void {
 
   app.post('/api/imports', async (request, reply) => {
     const body = request.body as
-      | { file?: string; fileName?: string; parser?: string; mode?: string; password?: string }
+      | {
+          file?: string;
+          fileName?: string;
+          parser?: string;
+          mode?: string;
+          password?: string;
+          templateName?: string;
+        }
       | undefined;
 
     const result = await ImportStatementUC.execute({
@@ -162,6 +297,9 @@ export function registerRoutes(app: FastifyInstance): void {
       parser: (body?.parser ?? 'TEMPLATE') as Parameters<typeof ImportStatementUC.execute>[0]['parser'],
       mode: (body?.mode ?? 'STRICT') as 'STRICT' | 'LENIENT',
       ...(body?.password === undefined ? {} : { password: body.password }),
+      ...(body?.templateName === undefined || body.templateName.length === 0
+        ? {}
+        : { templateName: body.templateName }),
     });
     return result.ok
       ? reply.send(result.value)

@@ -19,13 +19,45 @@ export interface Provenance {
   readonly importedAt: IsoDateTime;
 }
 
+export interface ParsedLoanPayment {
+  readonly date: IsoDate;
+  readonly amount: Money;
+}
+
 /** Loan terms, present only on a hand-loan row. */
 export interface ParsedHandLoan {
-  /** Opaque; the borrower's real name never leaves the vault (FR-7.2). */
+  /** Opaque; used for anything that leaves the machine (FR-7.2). */
   readonly borrowerRef: string;
+  /** Kept for the register, which is filtered and sorted by it. Vault only. */
+  readonly borrowerName: string;
   readonly interestRatePct: string;
   readonly interestBasis: 'SIMPLE' | 'COMPOUND';
   readonly startDate: IsoDate;
+  readonly closedDate?: IsoDate;
+  readonly notes?: string;
+  readonly principalRepayments: readonly ParsedLoanPayment[];
+  readonly interestPayments: readonly ParsedLoanPayment[];
+  /**
+   * The status the SOURCE claimed. Status is derived from repayments, so this is
+   * used only to reconstruct a repayment the sheet had no column for: a loan
+   * marked Repaid with no repayment rows must still show its principal back.
+   */
+  readonly declaredStatus?: 'ACTIVE' | 'PARTIALLY_REPAID' | 'REPAID';
+}
+
+/**
+ * A figure the source stated that the engine computes differently.
+ *
+ * Neither value is discarded and neither silently wins: a spreadsheet cell can
+ * be stale, but it can equally be catching a mistake here, and the only useful
+ * thing to do with a disagreement about money is show it to the person who
+ * knows which is right.
+ */
+export interface ReconciliationNote {
+  readonly row: number;
+  readonly field: string;
+  readonly stated: string;
+  readonly computed: string;
 }
 
 export interface ParsedTransaction {
@@ -71,6 +103,8 @@ export interface ImportReport {
     readonly sourceRow: number;
     readonly reason: string;
   }[];
+  /** Stated figures that the engine recomputed differently. Never silent. */
+  readonly reconciliation?: readonly ReconciliationNote[];
 }
 
 export interface IngestInput {
@@ -79,6 +113,15 @@ export interface IngestInput {
   readonly parser: ParserName;
   readonly mode: ImportMode;
   readonly password?: string;
+  /**
+   * Which portTrack template this is meant to be, when the user chose one.
+   *
+   * Optional: the template is still identified from its header, so an import
+   * works without it. Supplying it turns a generic "matches no template" into a
+   * diff naming the exact columns at fault, and catches a file uploaded under
+   * the wrong template — which would otherwise import as the wrong asset class.
+   */
+  readonly templateName?: string;
   /** Natural keys already in the ledger, for duplicate detection (US-4.7). */
   readonly existingKeys?: readonly string[];
 }
