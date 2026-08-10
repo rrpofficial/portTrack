@@ -19,7 +19,7 @@ import {
 } from './templates.js';
 import { naturalKey, partition } from './duplicates.js';
 import { ingest } from './pipeline.js';
-import { projectToLedger } from './ledger.js';
+import { ledgerNaturalKeys, projectToLedger } from './ledger.js';
 
 export * from './types.js';
 export type { LedgerProjection, UnappliedTransaction } from './ledger.js';
@@ -30,7 +30,7 @@ export type { ParseOutcome } from './brokers.js';
 export const Pipeline = { ingest };
 
 /** US-4.1 — parsed rows become holdings, lots and income events. */
-export const LedgerProjector = { project: projectToLedger };
+export const LedgerProjector = { project: projectToLedger, naturalKeys: ledgerNaturalKeys };
 export { ledgerNaturalKeys } from './ledger.js';
 
 /** US-4.2 — CAMS / KFintech consolidated account statements. */

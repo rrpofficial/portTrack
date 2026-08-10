@@ -1,7 +1,22 @@
 /** Ingestion types. Types only — no runtime behaviour. */
 import type { IsoDate, IsoDateTime, Money, Quantity } from '@porttrack/shared-kernel';
 
-export type ParserName = 'CAMS' | 'ZERODHA_TRADEBOOK' | 'ZERODHA_TAX_PNL' | 'VESTED' | 'ETRADE' | 'TEMPLATE';
+/**
+ * `MANUAL` is not a file format — it is a trade typed into the app by hand.
+ *
+ * It is a ParserName so that a manual entry travels the SAME projection as an
+ * imported one: identical FIFO, identical asset identity, identical disposal
+ * handling. A parallel write path for manual trades would be a second engine to
+ * keep in step with the first, and the two would drift.
+ */
+export type ParserName =
+  | 'CAMS'
+  | 'ZERODHA_TRADEBOOK'
+  | 'ZERODHA_TAX_PNL'
+  | 'VESTED'
+  | 'ETRADE'
+  | 'TEMPLATE'
+  | 'MANUAL';
 export type ImportMode = 'STRICT' | 'LENIENT';
 
 export interface RowError {

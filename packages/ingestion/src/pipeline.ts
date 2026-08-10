@@ -7,7 +7,7 @@
  * the case where the user has seen the rejections and wants the rest anyway, and
  * it still reports every rejected row rather than dropping it quietly.
  */
-import { Ok, type Result } from '@porttrack/shared-kernel';
+import { Err, Ok, UnsupportedAssetClassError, type Result } from '@porttrack/shared-kernel';
 import { parseCams } from './cams.js';
 import { parseEtrade, parseVested, parseZerodhaTradebook, type ParseOutcome } from './brokers.js';
 import { parseTemplateFile } from './templates.js';
@@ -37,6 +37,13 @@ async function runParser(input: IngestInput): Promise<Result<ParseOutcome>> {
       const parsed = await parseCams({ pdf: input.file, password: input.password ?? '' });
       return parsed.ok ? Ok({ transactions: parsed.value, errors: [] }) : parsed;
     }
+    case 'MANUAL':
+      // A hand-typed trade has no file to parse. It reaches the ledger through
+      // TradeUC, which builds the transaction directly and hands it to the same
+      // projection this pipeline feeds.
+      return Err(
+        new UnsupportedAssetClassError('a manual trade is not imported from a file'),
+      );
   }
 }
 

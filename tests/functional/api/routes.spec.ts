@@ -58,6 +58,48 @@ describe('US-8.11 Scenario: Health endpoints distinguish liveness from readiness
     expect(JSON.parse(response.body).reason).toBe('VAULT_LOCKED');
   });
 
+  /*
+   * The Lock vault button posted no body under a JSON content-type. Fastify
+   * answered 400 FST_ERR_CTP_EMPTY_JSON_BODY, the error handler reported it as
+   * an internal error, and the button silently did nothing on every click — the
+   * vault stayed unlocked while the screen said something had gone wrong.
+   */
+  it('locks the vault when the browser posts no body under a JSON content-type', async () => {
+    const instance = await app();
+    await instance.inject({
+      method: 'POST',
+      url: '/api/vault/unlock',
+      payload: { passphrase: 'correct horse battery staple' },
+    });
+
+    const response = await instance.inject({
+      method: 'POST',
+      url: '/api/vault/lock',
+      headers: { 'content-type': 'application/json' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const ready = await instance.inject({ method: 'GET', url: '/api/health/ready' });
+    expect(ready.statusCode).toBe(503);
+  });
+
+  it('reports a malformed request as the client error it is, not as INTERNAL_ERROR', async () => {
+    const response = await (
+      await app()
+    ).inject({
+      method: 'POST',
+      url: '/api/vault/unlock',
+      headers: { 'content-type': 'application/json' },
+      payload: 'this is not json',
+    });
+
+    expect(response.statusCode).toBeGreaterThanOrEqual(400);
+    expect(response.statusCode).toBeLessThan(500);
+    // Masking a 4xx as an internal error sends the reader looking for a server
+    // defect that is not there.
+    expect(JSON.parse(response.body).error.code).not.toBe('INTERNAL_ERROR');
+  });
+
   it('returns 200 from /api/health/ready once unlocked', async () => {
     const instance = await app();
     await instance.inject({

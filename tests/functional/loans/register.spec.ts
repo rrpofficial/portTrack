@@ -30,8 +30,20 @@ afterEach(async () => {
   await Vault.close();
 });
 
-const lend = (borrowerName: string, amount: string, rate = '12', loanDate = '2025-04-01') =>
-  LoanUC.record({ borrowerName, principal: inr(amount), interestRatePct: rate, loanDate });
+const lend = (
+  borrowerName: string,
+  amount: string,
+  rate = '12',
+  loanDate = '2025-04-01',
+  confirmDuplicate = false,
+) =>
+  LoanUC.record({
+    borrowerName,
+    principal: inr(amount),
+    interestRatePct: rate,
+    loanDate,
+    ...(confirmDuplicate ? { confirmDuplicate: true } : {}),
+  });
 
 const register = (query = {}) => LoanUC.register({ asOf: AS_OF, ...query });
 
@@ -87,7 +99,8 @@ describe('Scenario: A loan is recorded and survives a reload', () => {
 describe('Scenario: Several loans to one borrower stay distinct', () => {
   it('records them separately, on different days and in different years', async () => {
     expectOk(await lend('Rajesh Sharma', '2600000', '8', '2025-04-01'));
-    expectOk(await lend('Rajesh Sharma', '400000', '9', '2025-04-01'));
+    // Second loan the same day: flagged, and confirmed by the lender.
+    expectOk(await lend('Rajesh Sharma', '400000', '9', '2025-04-01', true));
     expectOk(await lend('Rajesh Sharma', '500000', '10', '2026-01-15'));
 
     const result = expectOk(await register());
@@ -97,11 +110,35 @@ describe('Scenario: Several loans to one borrower stay distinct', () => {
     expect(result.borrowers).toEqual(['Rajesh Sharma']);
   });
 
-  it('does not duplicate a loan recorded twice with identical terms', async () => {
-    expectOk(await lend('Rajesh Sharma', '2600000', '8', '2025-04-01'));
+  /*
+   * This scenario previously asserted that recording identical terms twice
+   * produced ONE loan, and called that de-duplication. It was not: the second
+   * record overwrote the first, because both derived the same asset id and the
+   * assets table upserts. With identical terms the loss was invisible, but the
+   * same code path silently destroyed a genuine second loan.
+   *
+   * The protective intent — a lender who submits the form twice must not end up
+   * with two loans — is now met by asking instead of by overwriting.
+   */
+  it('refuses a loan recorded twice with identical terms, pending confirmation', async () => {
     expectOk(await lend('Rajesh Sharma', '2600000', '8', '2025-04-01'));
 
+    const second = await lend('Rajesh Sharma', '2600000', '8', '2025-04-01');
+
+    expect(second.ok).toBe(false);
+    if (!second.ok) expect(second.error.code).toBe('DUPLICATE_LOAN');
     expect(expectOk(await register()).loans).toHaveLength(1);
+    expect(expectOk(await register()).totals.totalPrincipal.amount).toBe('2600000');
+  });
+
+  it('records both when the lender confirms they are genuinely two loans', async () => {
+    expectOk(await lend('Rajesh Sharma', '2600000', '8', '2025-04-01'));
+
+    expectOk(await lend('Rajesh Sharma', '2600000', '8', '2025-04-01', true));
+
+    const result = expectOk(await register());
+    expect(result.loans).toHaveLength(2);
+    expect(result.totals.totalPrincipal.amount).toBe('5200000');
   });
 });
 

@@ -11,8 +11,14 @@
  * reading `0 lots · 0 held · ₹0` under a raw asset id — every column meaningless
  * and the one figure that matters, what is still owed, absent entirely.
  */
-import { useCallback, useEffect, useState } from 'react';
-import { api, type Ledger as LedgerData, type LoanRegister } from '../api.js';
+import { useCallback, useEffect, useState, type SyntheticEvent } from 'react';
+import {
+  api,
+  type Ledger as LedgerData,
+  type LoanRegister,
+  type RecordedTrade,
+  type TradeClass,
+} from '../api.js';
 import { Amount, Card, Chip } from '../components/primitives.js';
 import { navigate } from '../router.js';
 
@@ -27,6 +33,7 @@ export function Ledger() {
   const [loans, setLoans] = useState<LoanRegister | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [expanded, setExpanded] = useState<string | undefined>();
+  const [recording, setRecording] = useState(false);
 
   const load = useCallback(async (): Promise<void> => {
     // The loan register rather than the raw assets: it already carries the
@@ -65,16 +72,68 @@ export function Ledger() {
 
   if (holdings.length === 0 && ledger.liabilities.length === 0 && (loans?.loans.length ?? 0) === 0) {
     return (
-      <Card title="Ledger">
-        <p className="pt-muted" data-testid="ledger-empty">
-          Nothing recorded yet. Import a broker or fund statement to build your ledger.
-        </p>
-      </Card>
+      <div className="pt-stack">
+        <Card
+          title="Ledger"
+          action={
+            <button
+              type="button"
+              className="pt-button-inline"
+              onClick={() => {
+                setRecording((open) => !open);
+              }}
+            >
+              {recording ? 'Cancel' : 'Record a trade'}
+            </button>
+          }
+        >
+          <p className="pt-muted" data-testid="ledger-empty">
+            Nothing recorded yet. Import a broker or fund statement, or record a trade by hand.
+          </p>
+          {recording && (
+            <TradeForm
+              onSaved={() => void load()}
+              onClose={() => {
+                setRecording(false);
+              }}
+            />
+          )}
+        </Card>
+      </div>
     );
   }
 
   return (
     <div className="pt-stack">
+      <Card
+        title="Record a trade"
+        action={
+          <button
+            type="button"
+            className="pt-button-inline"
+            onClick={() => {
+              setRecording((open) => !open);
+            }}
+          >
+            {recording ? 'Cancel' : 'Record a trade'}
+          </button>
+        }
+      >
+        <p className="pt-muted">
+          For a buy or sell with no broker export — or one the export missed. A hand-typed trade
+          goes through the same engine an imported one does: the same FIFO, the same disposal
+          record, the same capital-gains treatment.
+        </p>
+        {recording && (
+          <TradeForm
+            onSaved={() => void load()}
+            onClose={() => {
+              setRecording(false);
+            }}
+          />
+        )}
+      </Card>
+
       {loans !== undefined && loans.loans.length > 0 && (
         <Card
           title="Loans receivable"
@@ -197,7 +256,14 @@ export function Ledger() {
                           setExpanded(isOpen ? undefined : asset.assetId);
                         }}
                       >
-                        {asset.symbol ?? asset.isin ?? asset.assetId}
+                        {/*
+                          The folio belongs in this chain. A mutual fund has no
+                          ticker, so without it every fund fell through to the
+                          raw asset id — `ast_domestic_mutual_fund_e2e_folio_1`
+                          — which is unreadable and, worse, identical in shape
+                          between two funds a user needs to tell apart.
+                        */}
+                        {asset.symbol ?? asset.isin ?? asset.folioRef ?? asset.assetId}
                       </button>
                     </td>
                     <td>{asset.assetClass.replaceAll('_', ' ').toLowerCase()}</td>
@@ -316,5 +382,257 @@ export function Ledger() {
         </Card>
       )}
     </div>
+  );
+}
+
+const IDENTIFIER_LABEL: Readonly<Record<string, string>> = {
+  SYMBOL: 'Symbol or ticker',
+  FOLIO: 'Folio number',
+  NAME: 'Company name',
+};
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * Manual trade entry.
+ *
+ * The identifier field follows the asset class, because what identifies a
+ * holding genuinely differs: a listed share has a ticker, a mutual fund has a
+ * folio, an unlisted company has neither. Asking for "symbol" against a fund
+ * invites a scheme name typed into a field the importer treats as a ticker, and
+ * the same fund imported later from CAMS would then not match it.
+ */
+function TradeForm({ onSaved, onClose }: { onSaved: () => void; onClose: () => void }) {
+  const [classes, setClasses] = useState<readonly TradeClass[]>([]);
+  const [assetClass, setAssetClass] = useState('DOMESTIC_EQUITY');
+  const [side, setSide] = useState<'BUY' | 'SELL'>('BUY');
+  const [tradeDate, setTradeDate] = useState(today);
+  const [identifier, setIdentifier] = useState('');
+  const [isin, setIsin] = useState('');
+  const [quantity, setQuantity] = useState('');
+  const [price, setPrice] = useState('');
+  const [currency, setCurrency] = useState('INR');
+  const [fees, setFees] = useState('');
+  const [error, setError] = useState<string | undefined>();
+  const [busy, setBusy] = useState(false);
+  const [duplicate, setDuplicate] = useState<string | undefined>();
+  const [result, setResult] = useState<RecordedTrade | undefined>();
+
+  useEffect(() => {
+    void (async () => {
+      const loaded = await api.tradeClasses();
+      if (loaded.ok) setClasses(loaded.value.classes);
+    })();
+  }, []);
+
+  const selected = classes.find((entry) => entry.assetClass === assetClass);
+  const identifierKind = selected?.identifier ?? 'SYMBOL';
+
+  const submit = useCallback(
+    async (confirmDuplicate: boolean): Promise<void> => {
+      setBusy(true);
+      setError(undefined);
+
+      const trimmed = identifier.trim();
+      const saved = await api.recordTrade({
+        assetClass,
+        side,
+        tradeDate,
+        quantity: quantity.trim(),
+        pricePerUnit: { amount: price.trim(), currency },
+        ...(identifierKind === 'FOLIO' ? { folioRef: trimmed } : {}),
+        ...(identifierKind === 'NAME' ? { schemeName: trimmed } : {}),
+        ...(identifierKind === 'SYMBOL' ? { symbol: trimmed } : {}),
+        ...(isin.trim().length === 0 ? {} : { isin: isin.trim() }),
+        ...(fees.trim().length === 0 ? {} : { fees: { amount: fees.trim(), currency } }),
+        ...(confirmDuplicate ? { confirmDuplicate: true } : {}),
+      });
+
+      setBusy(false);
+      if (!saved.ok) {
+        // A question, not a failure — two fills of one order is ordinary.
+        if (saved.error.code === 'DUPLICATE_TRADE') {
+          setDuplicate(saved.error.message);
+          return;
+        }
+        setError(saved.error.message);
+        return;
+      }
+
+      setDuplicate(undefined);
+      setResult(saved.value);
+      setQuantity('');
+      setPrice('');
+      onSaved();
+      // A sell that found nothing to sell is reported rather than celebrated,
+      // so the form stays open with the explanation on screen.
+      if (saved.value.unapplied.length === 0) onClose();
+    },
+    [assetClass, side, tradeDate, identifier, identifierKind, isin, quantity, price, currency, fees, onSaved, onClose],
+  );
+
+  function onFormSubmit(event: SyntheticEvent): void {
+    event.preventDefault();
+    void submit(false);
+  }
+
+  if (duplicate !== undefined) {
+    return (
+      <div className="pt-callout pt-callout--warn" role="alertdialog" data-testid="duplicate-trade-warning">
+        <h3 className="pt-subhead">This trade is already on the ledger</h3>
+        <p className="pt-muted">
+          {duplicate}. If this is a second fill of the same order, record it — the ledger keeps
+          both. If you are entering a trade you already recorded, cancel.
+        </p>
+        <div className="pt-actions">
+          <button
+            type="button"
+            disabled={busy}
+            data-testid="confirm-duplicate-trade"
+            onClick={() => void submit(true)}
+          >
+            {busy ? 'Recording…' : 'Yes, record it as a separate fill'}
+          </button>
+          <button
+            type="button"
+            className="pt-button-inline"
+            onClick={() => {
+              setDuplicate(undefined);
+            }}
+          >
+            Cancel and go back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <form className="pt-form pt-form--grid" onSubmit={onFormSubmit} data-testid="trade-form">
+      <div>
+        <label htmlFor="trade-class">What kind of holding</label>
+        <select
+          id="trade-class"
+          value={assetClass}
+          onChange={(event) => {
+            setAssetClass(event.target.value);
+          }}
+        >
+          {classes.map((entry) => (
+            <option key={entry.assetClass} value={entry.assetClass}>
+              {entry.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label htmlFor="trade-side">Buy or sell</label>
+        <select
+          id="trade-side"
+          value={side}
+          onChange={(event) => {
+            setSide(event.target.value as 'BUY' | 'SELL');
+          }}
+        >
+          <option value="BUY">Buy</option>
+          <option value="SELL">Sell</option>
+        </select>
+      </div>
+      <div>
+        <label htmlFor="trade-identifier">{IDENTIFIER_LABEL[identifierKind]}</label>
+        <input
+          id="trade-identifier"
+          type="text"
+          value={identifier}
+          onChange={(event) => {
+            setIdentifier(event.target.value);
+          }}
+        />
+      </div>
+      <div>
+        <label htmlFor="trade-isin">ISIN (optional)</label>
+        <input
+          id="trade-isin"
+          type="text"
+          value={isin}
+          onChange={(event) => {
+            setIsin(event.target.value);
+          }}
+        />
+      </div>
+      <div>
+        <label htmlFor="trade-date">Trade date</label>
+        <input
+          id="trade-date"
+          type="date"
+          value={tradeDate}
+          onChange={(event) => {
+            setTradeDate(event.target.value);
+          }}
+        />
+      </div>
+      <div>
+        <label htmlFor="trade-quantity">Quantity or units</label>
+        <input
+          id="trade-quantity"
+          type="text"
+          inputMode="decimal"
+          value={quantity}
+          onChange={(event) => {
+            setQuantity(event.target.value);
+          }}
+        />
+      </div>
+      <div>
+        <label htmlFor="trade-price">Price per unit</label>
+        <input
+          id="trade-price"
+          type="text"
+          inputMode="decimal"
+          value={price}
+          onChange={(event) => {
+            setPrice(event.target.value);
+          }}
+        />
+      </div>
+      <div>
+        <label htmlFor="trade-currency">Currency</label>
+        <select
+          id="trade-currency"
+          value={currency}
+          onChange={(event) => {
+            setCurrency(event.target.value);
+          }}
+        >
+          <option value="INR">INR</option>
+          <option value="USD">USD</option>
+        </select>
+      </div>
+      <div>
+        <label htmlFor="trade-fees">Brokerage and charges</label>
+        <input
+          id="trade-fees"
+          type="text"
+          inputMode="decimal"
+          value={fees}
+          onChange={(event) => {
+            setFees(event.target.value);
+          }}
+        />
+      </div>
+      <button type="submit" disabled={busy}>
+        {busy ? 'Recording…' : side === 'BUY' ? 'Record purchase' : 'Record sale'}
+      </button>
+      {error !== undefined && (
+        <p className="pt-error" role="alert">
+          {error}
+        </p>
+      )}
+      {result !== undefined && result.unapplied.length > 0 && (
+        <p className="pt-error" role="alert" data-testid="trade-unapplied">
+          {result.unapplied.map((row) => row.reason).join('; ')}
+        </p>
+      )}
+    </form>
   );
 }

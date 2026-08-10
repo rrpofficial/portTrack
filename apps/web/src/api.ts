@@ -7,6 +7,8 @@
 export interface ApiError {
   readonly code: string;
   readonly message: string;
+  /** DUPLICATE_LOAN only: ids of the loans the new one would duplicate. */
+  readonly duplicates?: readonly string[];
 }
 
 export type ApiResult<T> = { ok: true; value: T } | { ok: false; error: ApiError };
@@ -33,10 +35,16 @@ async function request<T>(
   }, timeoutMs);
 
   try {
+    /*
+     * The JSON content-type goes on only when there IS a body. Declaring it on
+     * a bodyless POST makes Fastify try to parse an empty body and answer 400 —
+     * which is what silently broke the Lock vault button: it posts nothing, so
+     * every click failed and the vault stayed unlocked.
+     */
     const response = await fetch(`/api${path}`, {
-      headers: { 'content-type': 'application/json' },
-      signal: controller.signal,
       ...init,
+      signal: controller.signal,
+      ...(init?.body === undefined ? {} : { headers: { 'content-type': 'application/json' } }),
     });
     const body: unknown = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -110,6 +118,8 @@ export interface LedgerAsset {
   readonly currency: string;
   readonly symbol?: string;
   readonly isin?: string;
+  /** How a mutual fund is identified — it has no ticker. */
+  readonly folioRef?: string;
   readonly lots: readonly AcquisitionLot[];
   readonly incomeEvents: readonly IncomeEvent[];
 }
@@ -236,6 +246,39 @@ export interface LoanRegister {
   readonly loans: readonly LoanView[];
   readonly totals: LoanTotals;
   readonly borrowers: readonly string[];
+}
+
+export interface TradeClass {
+  readonly assetClass: string;
+  readonly label: string;
+  /** Which identifier field the form should ask for. */
+  readonly identifier: 'SYMBOL' | 'FOLIO' | 'NAME';
+}
+
+export interface RecordedTrade {
+  readonly assetId: string;
+  readonly exits: number;
+  readonly unapplied: readonly { readonly reason: string }[];
+}
+
+export type LoanAuditAction =
+  | 'CREATED'
+  | 'CREATED_AS_DUPLICATE'
+  | 'EDITED'
+  | 'CLOSED'
+  | 'REOPENED'
+  | 'PRINCIPAL_REPAYMENT'
+  | 'INTEREST_PAYMENT';
+
+export interface LoanAuditEntry {
+  readonly entryId: string;
+  readonly loanId: string;
+  readonly action: LoanAuditAction;
+  readonly field?: string;
+  readonly oldValue?: string;
+  readonly newValue?: string;
+  readonly reason?: string;
+  readonly recordedAt: string;
 }
 
 export interface LoanQuery {
@@ -403,6 +446,22 @@ export const api = {
    */
   periods: () => request<Periods>('/reference/periods'),
 
+  tradeClasses: () => request<{ classes: readonly TradeClass[] }>('/trades/classes'),
+  recordTrade: (input: {
+    assetClass: string;
+    side: 'BUY' | 'SELL';
+    tradeDate: string;
+    symbol?: string;
+    isin?: string;
+    folioRef?: string;
+    schemeName?: string;
+    quantity: string;
+    pricePerUnit: Money;
+    fees?: Money;
+    otherCharges?: Money;
+    confirmDuplicate?: boolean;
+  }) => request<RecordedTrade>('/trades', { method: 'POST', body: JSON.stringify(input) }),
+
   loans: (query: LoanQuery = {}) => request<LoanRegister>(`/loans${loanQueryString(query)}`),
   recordLoan: (input: {
     borrowerName: string;
@@ -410,7 +469,29 @@ export const api = {
     interestRatePct: string;
     loanDate: string;
     notes?: string;
+    /** Re-send the same payload with this set to accept a flagged duplicate. */
+    confirmDuplicate?: boolean;
   }) => request<{ loanId: string }>('/loans', { method: 'POST', body: JSON.stringify(input) }),
+  editLoan: (
+    loanId: string,
+    input: {
+      borrowerName?: string;
+      principalAmount?: string;
+      interestRatePct?: string;
+      loanDate?: string;
+      notes?: string;
+      closedDate?: string | null;
+      reason?: string;
+    },
+  ) =>
+    request<{ changed: number; entries: readonly LoanAuditEntry[] }>(
+      `/loans/${encodeURIComponent(loanId)}`,
+      { method: 'PUT', body: JSON.stringify(input) },
+    ),
+  loanAudit: (loanId: string) =>
+    request<{ entries: readonly LoanAuditEntry[] }>(
+      `/loans/${encodeURIComponent(loanId)}/audit`,
+    ),
   recordInterestPayment: (
     loanId: string,
     input: { date: string; amount: Money; mode: PaymentMode; notes?: string },

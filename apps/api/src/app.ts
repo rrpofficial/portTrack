@@ -44,17 +44,59 @@ export async function buildApp(config: ApiConfig): Promise<ApiApp> {
    * `[DecimalError] Invalid argument: 1,00,000`, which exposes an internal
    * library and a user's amount while telling them nothing they can act on.
    *
-   * The message is replaced, not the status: a 500 is genuinely a defect here
-   * and must not be dressed up as a client error.
+   * Only 5xx is masked. The first version of this masked EVERYTHING, and a
+   * malformed request then came back as "portTrack could not complete that
+   * request" — indistinguishable from a server defect. The Lock vault button hit
+   * exactly that: the browser posted no body under a JSON content-type, Fastify
+   * correctly answered 400, and the screen reported an internal error, which
+   * sent the search in entirely the wrong direction. A 4xx is the client's to
+   * fix, so it keeps its own code and message.
    */
-  fastify.setErrorHandler((error: { statusCode?: number }, _request, reply) => {
-    void reply.code(error.statusCode ?? 500).send({
-      error: {
-        code: 'INTERNAL_ERROR',
-        message: 'portTrack could not complete that request. Nothing was changed.',
-      },
-    });
-  });
+  /*
+   * An empty body under a JSON content-type means "no arguments", not "malformed
+   * request". Fastify's default parser rejects it with 400, which is defensible
+   * in the abstract and wrong here: `/api/vault/lock` takes no arguments, and a
+   * browser that declares JSON on every request could therefore never call it.
+   * Parsing this at the edge is better than teaching each caller a rule.
+   */
+  fastify.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (_request, body: string, done) => {
+      if (body.length === 0) {
+        done(null, {});
+        return;
+      }
+      try {
+        done(null, JSON.parse(body));
+      } catch (cause) {
+        const error = cause as Error & { statusCode?: number };
+        error.statusCode = 400;
+        done(error, undefined);
+      }
+    },
+  );
+
+  fastify.setErrorHandler(
+    (error: { statusCode?: number; code?: string; message?: string }, _request, reply) => {
+      const status = error.statusCode ?? 500;
+      if (status < 500) {
+        void reply.code(status).send({
+          error: {
+            code: error.code ?? 'BAD_REQUEST',
+            message: error.message ?? 'the request could not be read',
+          },
+        });
+        return;
+      }
+      void reply.code(status).send({
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: 'portTrack could not complete that request. Nothing was changed.',
+        },
+      });
+    },
+  );
 
   registerRoutes(fastify);
   await fastify.ready();

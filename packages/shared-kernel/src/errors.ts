@@ -96,6 +96,40 @@ export class PiiLeakError extends DomainError {
     super(message);
   }
 }
+/**
+ * A new hand loan matches one already on the book. Not a refusal — a question.
+ *
+ * The matching loan ids travel on the error so the caller can show the lender
+ * what they are about to duplicate. Ids only: `loanIds` reaches the HTTP layer,
+ * and a borrower's name must not (ADR-013). The names shown alongside are read
+ * from the vault by the browser, which already holds them.
+ */
+export class DuplicateLoanError extends DomainError {
+  readonly code = 'DUPLICATE_LOAN';
+  constructor(
+    message: string,
+    readonly loanIds: readonly string[],
+  ) {
+    super(message);
+  }
+}
+/**
+ * A trade matches one already on the ledger. Also a question, not a refusal.
+ *
+ * Two fills of one order, on one day, at one price is ordinary — and the natural
+ * key that makes a re-imported statement idempotent cannot distinguish it from
+ * the same trade typed twice.
+ */
+export class DuplicateTradeError extends DomainError {
+  readonly code = 'DUPLICATE_TRADE';
+  constructor(
+    message: string,
+    /** Instrument identifiers, never a folio holder's name. */
+    readonly identifiers: readonly string[],
+  ) {
+    super(message);
+  }
+}
 export class VaultUnlockError extends DomainError {
   readonly code = 'VAULT_UNLOCK_FAILED';
 }

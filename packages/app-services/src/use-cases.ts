@@ -6,6 +6,8 @@
  * wrong layer, and the API's "thin shell" test exists to keep it that way.
  */
 import {
+  DuplicateLoanError,
+  DuplicateTradeError,
   Err,
   FutureSnapshotError,
   FyCalendar,
@@ -25,10 +27,15 @@ import {
   HandLoanLedger,
   LoanExporter,
   ValuationEngine,
+  applyLoanEdit,
+  loanDuplicatesOf,
   type Asset,
   type ExitTransaction,
   type HandLoan,
   type Liability,
+  type LoanAuditAction,
+  type LoanAuditEntry,
+  type LoanEdit,
   type LoanRegister,
   type LoanSortKey,
   type LoanStatus,
@@ -75,6 +82,7 @@ import {
   AssetRepository,
   ExitRepository,
   LiabilityRepository,
+  LoanAuditRepository,
   SettingsRepository,
   SnapshotRepository,
   Vault,
@@ -400,6 +408,213 @@ export const ImportStatementUC = {
   },
 };
 
+/* ------------------------------------------------------------ manual trades */
+
+/**
+ * Asset classes a trade can be typed in for, and the identifier each one is
+ * actually known by.
+ *
+ * Not every class belongs here. A hand loan has its own screen because it is a
+ * receivable rather than a holding; a bank balance is a position, not a trade.
+ * Offering them in a trade form would produce holdings with a quantity and a
+ * price that mean nothing.
+ */
+export const MANUAL_TRADE_CLASSES = [
+  { assetClass: 'DOMESTIC_EQUITY', label: 'Indian listed equity', identifier: 'SYMBOL' },
+  { assetClass: 'DOMESTIC_ETF', label: 'Indian ETF', identifier: 'SYMBOL' },
+  { assetClass: 'DOMESTIC_MUTUAL_FUND', label: 'Mutual fund (equity, debt or hybrid)', identifier: 'FOLIO' },
+  { assetClass: 'FOREIGN_EQUITY', label: 'Foreign listed equity', identifier: 'SYMBOL' },
+  { assetClass: 'FOREIGN_ETF', label: 'Foreign ETF', identifier: 'SYMBOL' },
+  { assetClass: 'UNLISTED_SHARES', label: 'Unlisted shares', identifier: 'NAME' },
+  { assetClass: 'SGB', label: 'Sovereign gold bond', identifier: 'SYMBOL' },
+] as const;
+
+export type ManualTradeClass = (typeof MANUAL_TRADE_CLASSES)[number]['assetClass'];
+
+export interface RecordTradeInput {
+  readonly assetClass: string;
+  readonly side: 'BUY' | 'SELL';
+  readonly tradeDate: IsoDate;
+  readonly symbol?: string;
+  readonly isin?: string;
+  readonly folioRef?: string;
+  readonly schemeName?: string;
+  readonly quantity: string;
+  readonly pricePerUnit: MoneyValue;
+  readonly fees?: MoneyValue;
+  readonly otherCharges?: MoneyValue;
+  /** Only meaningful for a mutual fund; decides equity vs debt tax treatment. */
+  readonly schemeCategory?: string;
+  readonly confirmDuplicate?: boolean;
+}
+
+export interface RecordTradeResult {
+  readonly assetId: string;
+  /** Present for a SELL: what the disposal realised against which lots. */
+  readonly exits: number;
+  /** Rows the projection could not place — a SELL with nothing to sell. */
+  readonly unapplied: readonly { readonly reason: string }[];
+}
+
+const TRADE_CLASSES = new Set<string>(MANUAL_TRADE_CLASSES.map((entry) => entry.assetClass));
+
+export const TradeUC = {
+  classes: (): Promise<Result<typeof MANUAL_TRADE_CLASSES>> =>
+    Promise.resolve(Ok(MANUAL_TRADE_CLASSES)),
+
+  /**
+   * A trade typed in by hand.
+   *
+   * Deliberately routed through the SAME projection an imported statement takes,
+   * rather than writing a lot straight to the repository. A hand-typed sell must
+   * deplete FIFO exactly as an imported one does, and must produce the same
+   * disposal record the capital-gains engine reads — a second write path would
+   * be a second set of rules to keep in step, and tax is where the divergence
+   * would surface.
+   */
+  async record(input: RecordTradeInput): Promise<Result<RecordTradeResult>> {
+    const guard = requireUnlocked();
+    if (!guard.ok) return guard;
+
+    if (!TRADE_CLASSES.has(input.assetClass)) {
+      return Err(
+        new VaultStateError(`${input.assetClass} cannot be recorded as a trade`),
+      );
+    }
+    if (!ISO_DATE.test(input.tradeDate)) {
+      return Err(new VaultStateError('a trade needs a date, as YYYY-MM-DD'));
+    }
+
+    const identity = [input.isin, input.symbol, input.folioRef, input.schemeName].find(
+      (value) => value !== undefined && value.trim().length > 0,
+    );
+    if (identity === undefined) {
+      return Err(
+        new VaultStateError('a trade needs a symbol, ISIN, folio number or scheme name'),
+      );
+    }
+
+    // Parsed, not trusted — the same reason the loan form parses: `1,00,000` is
+    // a reasonable thing to type and must never reach storage unparsed.
+    const price = Money.parse(input.pricePerUnit.amount, input.pricePerUnit.currency);
+    if (!price.ok) return price;
+    if (Money.compare(price.value, Money.zero(price.value.currency)) <= 0) {
+      return Err(new VaultStateError('a price must be greater than zero'));
+    }
+
+    // Money.parse is reused for the quantity purely as a decimal parser — it
+    // normalises `1,000` the same way, and the currency it is handed is
+    // discarded. Only `.amount` is ever read.
+    const quantity = Money.parse(input.quantity, price.value.currency);
+    if (!quantity.ok) {
+      return Err(new VaultStateError('a quantity must be a number'));
+    }
+    if (Money.compare(quantity.value, Money.zero(price.value.currency)) <= 0) {
+      return Err(new VaultStateError('a quantity must be greater than zero'));
+    }
+
+    const optionalCost = (
+      value: MoneyValue | undefined,
+    ): Result<MoneyValue | undefined> => {
+      if (value === undefined) return Ok(undefined);
+      const parsed = Money.parse(value.amount, price.value.currency);
+      return parsed.ok ? Ok(parsed.value) : parsed;
+    };
+
+    const fees = optionalCost(input.fees);
+    if (!fees.ok) return fees;
+    const charges = optionalCost(input.otherCharges);
+    if (!charges.ok) return charges;
+
+    const [existing, existingExits] = await Promise.all([
+      AssetRepository.all(),
+      ExitRepository.all(),
+    ]);
+
+    /*
+     * The same question the loan form asks, for the same reason. Two fills of one
+     * order on one day at one price is an ordinary thing; the natural key that
+     * makes a re-import idempotent cannot tell that apart from the same trade
+     * typed twice, and would silently drop the second.
+     */
+    const naturalKey = [
+      input.side,
+      input.tradeDate,
+      identity,
+      quantity.value.amount,
+      price.value.amount,
+      price.value.currency,
+    ].join('|');
+    const existingKeys = LedgerProjector.naturalKeys(existing, existingExits);
+    const occurrences = existingKeys.filter((key) => key === naturalKey).length;
+
+    if (occurrences > 0 && input.confirmDuplicate !== true) {
+      return Err(
+        new DuplicateTradeError(
+          `a ${input.side.toLowerCase()} of ${quantity.value.amount} ${identity} on ${input.tradeDate} at this price is already recorded`,
+          [identity],
+        ),
+      );
+    }
+
+    /*
+     * The lot id is derived from `importedAt`, so a confirmed duplicate needs a
+     * distinct one or the second fill merges into the first lot and the quantity
+     * is lost. The occurrence count supplies it deterministically: re-typing the
+     * SAME trade resolves to the same lot, while a confirmed second fill gets
+     * its own.
+     */
+    const token = createHash('sha256')
+      .update([naturalKey, String(occurrences)].join('|'))
+      .digest('hex')
+      .slice(0, 16);
+
+    const transaction = {
+      kind: input.side,
+      date: input.tradeDate,
+      quantity: quantity.value.amount,
+      pricePerUnit: price.value,
+      assetClass: input.assetClass,
+      ...(input.symbol === undefined || input.symbol.length === 0 ? {} : { symbol: input.symbol }),
+      ...(input.isin === undefined || input.isin.length === 0 ? {} : { isin: input.isin }),
+      ...(input.folioRef === undefined || input.folioRef.length === 0
+        ? {}
+        : { folioRef: input.folioRef }),
+      ...(input.schemeName === undefined || input.schemeName.length === 0
+        ? {}
+        : { schemeName: input.schemeName }),
+      ...(fees.value === undefined ? {} : { fees: fees.value }),
+      ...(charges.value === undefined ? {} : { otherCharges: charges.value }),
+      provenance: {
+        sourceFile: 'manual entry',
+        sourceRow: 1,
+        parserName: 'MANUAL' as const,
+        importedAt: `manual:${token}`,
+      },
+    };
+
+    const projected = LedgerProjector.project({
+      transactions: [transaction],
+      parser: 'MANUAL',
+      existing,
+      existingExits,
+    });
+    if (!projected.ok) return projected;
+
+    const saved = await AssetRepository.saveAll(projected.value.assets);
+    if (!saved.ok) return saved;
+    // After the assets: an exit references its asset by foreign key.
+    const savedExits = await ExitRepository.saveAll(projected.value.exits);
+    if (!savedExits.ok) return savedExits;
+
+    return Ok({
+      assetId: projected.value.assets[0]?.assetId ?? '',
+      exits: projected.value.exits.length,
+      unapplied: projected.value.unapplied.map((row) => ({ reason: row.reason })),
+    });
+  },
+};
+
 /* -------------------------------------------------------------- hand loans */
 
 export interface RecordLoanInput {
@@ -408,6 +623,22 @@ export interface RecordLoanInput {
   readonly interestRatePct: string;
   readonly loanDate: IsoDate;
   readonly notes?: string;
+  /**
+   * The lender has seen the matching loans and says this is a further, separate
+   * one. Without it a same-borrower same-day entry is refused and the matches
+   * are returned for confirmation.
+   */
+  readonly confirmDuplicate?: boolean;
+}
+
+/** What the caller is shown when a new loan matches one already on the book. */
+export interface DuplicateLoanMatch {
+  readonly loanId: string;
+  readonly borrowerName: string;
+  readonly loanDate: IsoDate;
+  readonly principal: MoneyValue;
+  readonly interestRatePct: string;
+  readonly notes: string;
 }
 
 export interface RecordPaymentInput {
@@ -441,6 +672,52 @@ const loansOf = (assets: readonly Asset[]): readonly HandLoan[] =>
 function loanIdFor(input: RecordLoanInput, borrowerRef: string): string {
   const slug = (value: string) => value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_');
   return `ast_hand_loan_${slug(borrowerRef)}_${slug(input.loanDate)}_${slug(input.principal.amount)}`;
+}
+
+/**
+ * A free id for a loan whose natural key is already taken.
+ *
+ * The derived id encodes borrower, date and amount, which is exactly right for
+ * import — a re-imported row must land on the asset it landed on last time — and
+ * exactly wrong for a second genuine loan to the same person, on the same day,
+ * for the same sum. That combination is not a data-entry error; it happens, and
+ * before this the second loan silently OVERWROTE the first, because the assets
+ * table upserts on `asset_id`. The money simply vanished from the register.
+ *
+ * So the derived id stays the identity of the first loan, and a confirmed
+ * duplicate takes the next free `_d2`, `_d3` suffix. Import is untouched and
+ * remains idempotent.
+ */
+function freeLoanId(baseId: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(baseId)) return baseId;
+  for (let suffix = 2; ; suffix += 1) {
+    const candidate = `${baseId}_d${String(suffix)}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
+/** Content-addressed, so a frozen clock in a test cannot collide on the key. */
+function auditIdFor(parts: readonly string[]): string {
+  return `aud_${createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 20)}`;
+}
+
+/** One trail entry for something that is not a field-level edit. */
+function auditEvent(
+  loanId: string,
+  action: LoanAuditAction,
+  recordedAt: string,
+  detail: { readonly newValue?: string; readonly reason?: string } = {},
+): LoanAuditEntry {
+  return {
+    entryId: auditIdFor([loanId, action, recordedAt, detail.newValue ?? '', detail.reason ?? '']),
+    loanId,
+    action,
+    recordedAt,
+    ...(detail.newValue === undefined ? {} : { newValue: detail.newValue }),
+    ...(detail.reason === undefined || detail.reason.length === 0
+      ? {}
+      : { reason: detail.reason }),
+  };
 }
 
 export const LoanUC = {
@@ -492,8 +769,34 @@ export const LoanUC = {
       return Err(new VaultStateError('an interest rate must be a number, such as 12 or 8.5'));
     }
 
+    if (!ISO_DATE.test(input.loanDate)) {
+      return Err(new VaultStateError('a loan needs a date, as YYYY-MM-DD'));
+    }
+
     const ref = borrowerRef(name);
-    const loanId = loanIdFor({ ...input, principal: principal.value }, ref);
+    const assets = await AssetRepository.all();
+    const existing = loansOf(assets);
+
+    /*
+     * Same borrower, same day. Reported rather than refused: the lender is the
+     * only one who knows whether this is a second real loan or the same loan
+     * typed twice, and answering that question for them gets it wrong.
+     */
+    const duplicates = loanDuplicatesOf({ borrowerRef: ref, loanDate: input.loanDate }, existing);
+    if (duplicates.length > 0 && input.confirmDuplicate !== true) {
+      return Err(
+        new DuplicateLoanError(
+          duplicates.length === 1
+            ? 'a loan to this borrower dated the same day is already recorded'
+            : `${String(duplicates.length)} loans to this borrower dated the same day are already recorded`,
+          duplicates.map((loan) => loan.assetId),
+        ),
+      );
+    }
+
+    const baseId = loanIdFor({ ...input, principal: principal.value }, ref);
+    const loanId = freeLoanId(baseId, new Set(assets.map((asset) => asset.assetId)));
+    const recordedAt = currentPorts().clock.now();
 
     const saved = await AssetRepository.save({
       assetId: loanId,
@@ -517,7 +820,116 @@ export const LoanUC = {
         ...(input.notes === undefined || input.notes.length === 0 ? {} : { notes: input.notes }),
       },
     });
-    return saved.ok ? Ok(loanId) : saved;
+    if (!saved.ok) return saved;
+
+    // Recorded even for an ordinary creation: a trail that starts at the first
+    // edit cannot show what the loan was originally entered as, which is the
+    // one value a dispute turns on.
+    await LoanAuditRepository.append([
+      auditEvent(
+        loanId,
+        duplicates.length > 0 ? 'CREATED_AS_DUPLICATE' : 'CREATED',
+        recordedAt,
+        {
+          newValue: `${principal.value.currency} ${principal.value.amount} at ${rate.value.amount}% from ${input.loanDate}`,
+          ...(duplicates.length === 0
+            ? {}
+            : {
+                reason: `confirmed as distinct from ${duplicates.map((loan) => loan.assetId).join(', ')}`,
+              }),
+        },
+      ),
+    ]);
+    return Ok(loanId);
+  },
+
+  /**
+   * An audited edit. Every field is editable and no business rule restricts the
+   * values — a deliberate choice, so that a mistyped principal or a wrong date
+   * can be corrected in place rather than by closing the loan and re-entering
+   * it, which leaves a fictitious settled loan on the register forever.
+   *
+   * Parse-level validation stays: an amount must still be a number and a date
+   * must still be ISO. That is not a business rule but the difference between a
+   * loan and a row that makes the whole register throw on read.
+   */
+  async edit(
+    loanId: string,
+    edit: LoanEdit,
+    options: { readonly reason?: string } = {},
+  ): Promise<Result<readonly LoanAuditEntry[]>> {
+    const guard = requireUnlocked();
+    if (!guard.ok) return guard;
+
+    const asset = await AssetRepository.findById(loanId);
+    if (asset?.handLoan === undefined) {
+      return Err(new VaultStateError(`no hand loan ${loanId} was found`));
+    }
+
+    let clean: LoanEdit = {};
+
+    if (edit.borrowerName !== undefined) {
+      const name = edit.borrowerName.trim();
+      if (name.length === 0) return Err(new VaultStateError('a borrower name is required'));
+      clean = { ...clean, borrowerName: name };
+    }
+    if (edit.principalAmount !== undefined) {
+      const principal = Money.parse(edit.principalAmount, asset.handLoan.principal.currency);
+      if (!principal.ok) return principal;
+      clean = { ...clean, principalAmount: principal.value.amount };
+    }
+    if (edit.interestRatePct !== undefined) {
+      const rate = Money.parse(edit.interestRatePct, 'INR');
+      if (!rate.ok) {
+        return Err(new VaultStateError('an interest rate must be a number, such as 12 or 8.5'));
+      }
+      clean = { ...clean, interestRatePct: rate.value.amount };
+    }
+    if (edit.loanDate !== undefined) {
+      if (!ISO_DATE.test(edit.loanDate)) {
+        return Err(new VaultStateError('a loan date must be written as YYYY-MM-DD'));
+      }
+      clean = { ...clean, loanDate: edit.loanDate };
+    }
+    if (edit.notes !== undefined) clean = { ...clean, notes: edit.notes };
+    if (edit.closedDate !== undefined) {
+      if (edit.closedDate !== null && !ISO_DATE.test(edit.closedDate)) {
+        return Err(new VaultStateError('a closed date must be written as YYYY-MM-DD'));
+      }
+      clean = { ...clean, closedDate: edit.closedDate };
+    }
+
+    const recordedAt = currentPorts().clock.now();
+    const applied = applyLoanEdit(asset.handLoan, clean, {
+      recordedAt,
+      entryId: (index) => auditIdFor([loanId, recordedAt, String(index), 'EDITED']),
+      ...(options.reason === undefined ? {} : { reason: options.reason }),
+    });
+
+    // Nothing actually moved. Persisting anyway would append a reason to the
+    // trail for a change that never happened.
+    if (applied.entries.length === 0) return Ok([]);
+
+    // The borrower's NAME changed, so its hash must follow — otherwise the
+    // register groups the loan under the old borrower and the filter loses it.
+    const renamed =
+      clean.borrowerName === undefined
+        ? applied.loan
+        : { ...applied.loan, borrowerRef: borrowerRef(clean.borrowerName) };
+
+    const saved = await AssetRepository.save({ ...asset, handLoan: renamed });
+    if (!saved.ok) return saved;
+
+    const appended = await LoanAuditRepository.append(applied.entries);
+    if (!appended.ok) return appended;
+    return Ok(applied.entries);
+  },
+
+  /** The trail for one loan, newest first. */
+  async auditFor(loanId: string): Promise<Result<readonly LoanAuditEntry[]>> {
+    const guard = requireUnlocked();
+    if (!guard.ok) return guard;
+    return Ok(await LoanAuditRepository.listFor(loanId));
   },
 
   /** A repayment of PRINCIPAL. Reduces what is owed and what earns interest. */
@@ -537,7 +949,15 @@ export const LoanUC = {
           ...(input.notes === undefined ? {} : { notes: input.notes }),
         },
       ],
-    }));
+    }),
+      (recordedAt) =>
+        auditEvent(input.loanId, 'PRINCIPAL_REPAYMENT', recordedAt, {
+          newValue: `${amount.value.currency} ${amount.value.amount} on ${input.date} by ${input.mode}`,
+          ...(input.notes === undefined || input.notes.length === 0
+            ? {}
+            : { reason: input.notes }),
+        }),
+    );
   },
 
   /** A payment of INTEREST. Does not reduce the principal. */
@@ -557,7 +977,15 @@ export const LoanUC = {
           ...(input.notes === undefined ? {} : { notes: input.notes }),
         },
       ],
-    }));
+    }),
+      (recordedAt) =>
+        auditEvent(input.loanId, 'INTEREST_PAYMENT', recordedAt, {
+          newValue: `${amount.value.currency} ${amount.value.amount} on ${input.date} by ${input.mode}`,
+          ...(input.notes === undefined || input.notes.length === 0
+            ? {}
+            : { reason: input.notes }),
+        }),
+    );
   },
 
   /**
@@ -584,14 +1012,22 @@ export const LoanUC = {
 
   /** Closing freezes accrual; it does not assert the money came back. */
   close(loanId: string, closedDate: IsoDate): Promise<Result<void>> {
-    return mutateLoan(loanId, (loan) => ({ ...loan, closedDate }));
+    return mutateLoan(
+      loanId,
+      (loan) => ({ ...loan, closedDate }),
+      (recordedAt) => auditEvent(loanId, 'CLOSED', recordedAt, { newValue: closedDate }),
+    );
   },
 
   reopen(loanId: string): Promise<Result<void>> {
-    return mutateLoan(loanId, (loan) => {
-      const { closedDate: _closed, ...rest } = loan;
-      return rest;
-    });
+    return mutateLoan(
+      loanId,
+      (loan) => {
+        const { closedDate: _closed, ...rest } = loan;
+        return rest;
+      },
+      (recordedAt) => auditEvent(loanId, 'REOPENED', recordedAt),
+    );
   },
 };
 
@@ -628,6 +1064,7 @@ function paymentIdFor(input: RecordPaymentInput, prefix: string): string {
 async function mutateLoan(
   loanId: string,
   change: (loan: HandLoan) => HandLoan,
+  trail?: (recordedAt: string) => LoanAuditEntry,
 ): Promise<Result<void>> {
   const guard = requireUnlocked();
   if (!guard.ok) return guard;
@@ -636,7 +1073,10 @@ async function mutateLoan(
   if (asset?.handLoan === undefined) {
     return Err(new VaultStateError(`no hand loan ${loanId} was found`));
   }
-  return AssetRepository.save({ ...asset, handLoan: change(asset.handLoan) });
+  const saved = await AssetRepository.save({ ...asset, handLoan: change(asset.handLoan) });
+  if (!saved.ok || trail === undefined) return saved;
+
+  return LoanAuditRepository.append([trail(currentPorts().clock.now())]);
 }
 
 /* ----------------------------------------------------------- reference data */
