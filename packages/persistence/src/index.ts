@@ -4,7 +4,7 @@
  * forward-only migrations, repositories.
  */
 import type { Result } from '@porttrack/shared-kernel';
-import type { Asset, ExitTransaction, Liability } from '@porttrack/core-domain';
+import type { Asset, ExitTransaction, Liability, LoanAuditEntry } from '@porttrack/core-domain';
 import type { Snapshot } from '@porttrack/snapshot';
 import { Vault } from './vault.js';
 import { currentVersion, runMigrations } from './migrations.js';
@@ -66,9 +66,17 @@ export interface ExitRepositoryOps {
   all(): Promise<readonly ExitTransaction[]>;
 }
 
+export interface LoanAuditRepositoryOps {
+  /** Append-only. No update, no delete — that is what makes the trail evidence. */
+  append(entries: readonly LoanAuditEntry[]): Promise<Result<void>>;
+  listFor(loanId: string): Promise<readonly LoanAuditEntry[]>;
+  all(): Promise<readonly LoanAuditEntry[]>;
+}
+
 export {
   AssetRepository,
   ExitRepository,
   LiabilityRepository,
   SettingsRepository,
 } from './asset-repository.js';
+export { LoanAuditRepository } from './loan-audit-repository.js';

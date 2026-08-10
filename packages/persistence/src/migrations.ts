@@ -223,6 +223,35 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX idx_hand_loan_interest_date ON hand_loan_interest_payments(date);
     `,
   },
+  {
+    version: 6,
+    name: 'hand-loan-audit',
+    up: `
+      -- The audit trail for hand loans: who changed what, from what, to what, why.
+      --
+      -- Deliberately WITHOUT a foreign key to assets. Every other child table
+      -- cascades on delete, which is right for them and wrong for this one: a
+      -- trail that disappears along with the record it describes cannot answer
+      -- the only question ever asked of it, which is what happened to a loan that
+      -- is no longer there.
+      --
+      -- Append-only by construction. There is no update or delete statement for
+      -- this table anywhere in the codebase, and a correction is a further row
+      -- rather than an edit to an existing one.
+      CREATE TABLE hand_loan_audit (
+        entry_id    TEXT PRIMARY KEY,
+        asset_id    TEXT NOT NULL,
+        action      TEXT NOT NULL,
+        field       TEXT,
+        old_value   TEXT,
+        new_value   TEXT,
+        reason      TEXT,
+        recorded_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_hand_loan_audit_asset ON hand_loan_audit(asset_id);
+      CREATE INDEX idx_hand_loan_audit_time ON hand_loan_audit(recorded_at);
+    `,
+  },
 ];
 
 const SCHEMA_TABLE = `

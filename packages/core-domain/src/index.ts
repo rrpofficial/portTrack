@@ -49,6 +49,13 @@ export {
   type SortDirection,
 } from './loan-book.js';
 export {
+  applyEdit as applyLoanEdit,
+  duplicatesOf as loanDuplicatesOf,
+  type LoanAuditAction,
+  type LoanAuditEntry,
+  type LoanEdit,
+} from './loan-audit.js';
+export {
   DEFAULT_EQUITY_BANDS,
   taxCharacterFor,
   taxCharacterOf,

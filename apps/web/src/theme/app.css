@@ -231,6 +231,35 @@ body {
 .pt-form--grid label { display: block; margin-bottom: var(--pt-space-1); }
 .pt-form--grid input { width: 100%; }
 
+/* Spans the grid: a free-text reason needs the room a date field does not. */
+.pt-form__wide { grid-column: 1 / -1; }
+
+.pt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pt-space-3);
+  align-items: center;
+  margin-top: var(--pt-space-3);
+}
+
+/*
+ * A question, not an error. Warm rather than red: the user has done nothing
+ * wrong, and colouring this like a failure makes them cancel a legitimate entry.
+ */
+.pt-callout {
+  border: 1px solid var(--pt-border-strong);
+  border-left: 4px solid var(--pt-accent);
+  border-radius: var(--pt-radius-control);
+  background: var(--pt-surface-muted);
+  padding: var(--pt-space-4);
+}
+
+.pt-callout--warn {
+  border-left-color: var(--pt-warn);
+  background: var(--pt-warn-wash);
+}
+.pt-callout .pt-subhead { margin-top: 0; }
+
 .pt-form button:disabled { background: var(--pt-border-strong); cursor: not-allowed; }
 
 .pt-button-inline {

@@ -24,6 +24,7 @@ import {
   type LoanQuery,
   ReferenceUC,
   TemplateUC,
+  TradeUC,
   ValuePortfolioUC,
   VaultUC,
   hasIncomeProfile,
@@ -31,6 +32,7 @@ import {
   saveIncomeProfile,
 } from '@porttrack/app-services';
 import { PiiVerifier } from '@porttrack/pii-masker';
+import { DuplicateLoanError, DuplicateTradeError } from '@porttrack/shared-kernel';
 
 interface UnlockBody {
   readonly passphrase?: string;
@@ -91,6 +93,67 @@ export function registerRoutes(app: FastifyInstance): void {
     return reply.send({ assets, liabilities, exits });
   });
 
+  /* ------------------------------------------------------------- trades */
+
+  app.get('/api/trades/classes', async (_request, reply) => {
+    const result = await TradeUC.classes();
+    return result.ok
+      ? reply.send({ classes: result.value })
+      : reply.code(409).send(failure(result.error.code, result.error.message));
+  });
+
+  app.post('/api/trades', async (request, reply) => {
+    const body = request.body as {
+      assetClass?: string;
+      side?: string;
+      tradeDate?: string;
+      symbol?: string;
+      isin?: string;
+      folioRef?: string;
+      schemeName?: string;
+      quantity?: string;
+      pricePerUnit?: { amount?: string; currency?: string };
+      fees?: { amount?: string; currency?: string };
+      otherCharges?: { amount?: string; currency?: string };
+      schemeCategory?: string;
+      confirmDuplicate?: boolean;
+    };
+
+    const currency = (body.pricePerUnit?.currency ?? 'INR') as 'INR';
+    const result = await TradeUC.record({
+      assetClass: body.assetClass ?? '',
+      side: body.side === 'SELL' ? 'SELL' : 'BUY',
+      tradeDate: body.tradeDate ?? '',
+      quantity: body.quantity ?? '0',
+      pricePerUnit: { amount: body.pricePerUnit?.amount ?? '0', currency },
+      ...(body.symbol === undefined ? {} : { symbol: body.symbol }),
+      ...(body.isin === undefined ? {} : { isin: body.isin }),
+      ...(body.folioRef === undefined ? {} : { folioRef: body.folioRef }),
+      ...(body.schemeName === undefined ? {} : { schemeName: body.schemeName }),
+      ...(body.fees?.amount === undefined ? {} : { fees: { amount: body.fees.amount, currency } }),
+      ...(body.otherCharges?.amount === undefined
+        ? {}
+        : { otherCharges: { amount: body.otherCharges.amount, currency } }),
+      ...(body.schemeCategory === undefined ? {} : { schemeCategory: body.schemeCategory }),
+      ...(body.confirmDuplicate === undefined ? {} : { confirmDuplicate: body.confirmDuplicate }),
+    });
+
+    if (result.ok) return reply.code(201).send(result.value);
+
+    // 409 for the same reason a duplicate loan is: the payload is well formed,
+    // and re-sending it with `confirmDuplicate` succeeds.
+    if (result.error instanceof DuplicateTradeError) {
+      return reply.code(409).send({
+        error: {
+          code: result.error.code,
+          message: result.error.message,
+          duplicates: result.error.identifiers,
+        },
+      });
+    }
+    return reply.code(422).send(failure(result.error.code, result.error.message));
+  });
+
   /* -------------------------------------------------------------- loans */
 
   const loanQuery = (query: unknown): LoanQuery => {
@@ -134,6 +197,7 @@ export function registerRoutes(app: FastifyInstance): void {
       interestRatePct?: string;
       loanDate?: string;
       notes?: string;
+      confirmDuplicate?: boolean;
     };
 
     const result = await LoanUC.record({
@@ -145,10 +209,63 @@ export function registerRoutes(app: FastifyInstance): void {
       interestRatePct: body.interestRatePct ?? '0',
       loanDate: body.loanDate ?? '',
       ...(body.notes === undefined ? {} : { notes: body.notes }),
+      ...(body.confirmDuplicate === undefined ? {} : { confirmDuplicate: body.confirmDuplicate }),
     });
+
+    if (result.ok) return reply.code(201).send({ loanId: result.value });
+
+    /*
+     * 409, not 422. The request is well formed and the server is refusing only
+     * until the lender answers a question — re-sending it verbatim with
+     * `confirmDuplicate` succeeds. A 422 would tell the client the payload was
+     * wrong, which it is not.
+     */
+    if (result.error instanceof DuplicateLoanError) {
+      return reply.code(409).send({
+        error: {
+          code: result.error.code,
+          message: result.error.message,
+          duplicates: result.error.loanIds,
+        },
+      });
+    }
+    return reply.code(422).send(failure(result.error.code, result.error.message));
+  });
+
+  app.put<{ Params: { id: string } }>('/api/loans/:id', async (request, reply) => {
+    const body = request.body as {
+      borrowerName?: string;
+      principalAmount?: string;
+      interestRatePct?: string;
+      loanDate?: string;
+      notes?: string;
+      closedDate?: string | null;
+      reason?: string;
+    };
+
+    const result = await LoanUC.edit(
+      request.params.id,
+      {
+        ...(body.borrowerName === undefined ? {} : { borrowerName: body.borrowerName }),
+        ...(body.principalAmount === undefined ? {} : { principalAmount: body.principalAmount }),
+        ...(body.interestRatePct === undefined ? {} : { interestRatePct: body.interestRatePct }),
+        ...(body.loanDate === undefined ? {} : { loanDate: body.loanDate }),
+        ...(body.notes === undefined ? {} : { notes: body.notes }),
+        ...(body.closedDate === undefined ? {} : { closedDate: body.closedDate }),
+      },
+      body.reason === undefined ? {} : { reason: body.reason },
+    );
+
     return result.ok
-      ? reply.code(201).send({ loanId: result.value })
+      ? reply.send({ changed: result.value.length, entries: result.value })
       : reply.code(422).send(failure(result.error.code, result.error.message));
+  });
+
+  app.get<{ Params: { id: string } }>('/api/loans/:id/audit', async (request, reply) => {
+    const result = await LoanUC.auditFor(request.params.id);
+    return result.ok
+      ? reply.send({ entries: result.value })
+      : reply.code(409).send(failure(result.error.code, result.error.message));
   });
 
   const paymentBody = (id: string, body: unknown) => {

@@ -451,23 +451,35 @@ test.describe('US-4.6 Scenario: CSV templates are obtainable from the app', () =
 test.describe('US-1.11 Scenario: The hand-loan register, end to end', () => {
   /*
    * Fixed and distinct per test, so one test's loans cannot satisfy another's
-   * assertions. Deliberately NOT seeded from the clock: recording the same terms
-   * twice is idempotent, so a re-run against an existing vault is harmless, and
-   * a test that reads the wall clock is not reproducible.
+   * assertions. Deliberately NOT seeded from the clock: a test that reads the
+   * wall clock is not reproducible.
    */
   const BORROWERS = {
     journey: 'E2E Journey Borrower',
     filter: 'E2E Filter Borrower',
     export: 'E2E Export Borrower',
     dashboard: 'E2E Dashboard Borrower',
+    duplicate: 'E2E Duplicate Borrower',
+    edited: 'E2E Edited Borrower',
+    cancelled: 'E2E Cancelled Borrower',
   } as const;
 
+  /**
+   * Records a loan through the form.
+   *
+   * A re-run against a vault that already holds these loans now meets the
+   * duplicate prompt rather than silently upserting — the whole point of the
+   * change — so the helper answers it. `confirm: false` cancels, leaving the
+   * loan that is already there; that keeps a second run idempotent, which is
+   * what the suite needs to stay re-runnable.
+   */
   async function lend(
     page: Page,
     name: string,
     amount: string,
     rate = '12',
     date = '2025-04-01',
+    onDuplicate: 'cancel' | 'confirm' = 'cancel',
   ): Promise<void> {
     await page.getByRole('button', { name: 'Record a loan' }).click();
     const form = page.getByTestId('new-loan-form');
@@ -476,7 +488,21 @@ test.describe('US-1.11 Scenario: The hand-loan register, end to end', () => {
     await form.getByLabel('Interest rate %').fill(rate);
     await form.getByLabel('Loan date').fill(date);
     await form.getByRole('button', { name: 'Save loan' }).click();
-    await expect(page.getByTestId('loan-table')).toContainText(name);
+
+    const warning = page.getByTestId('duplicate-warning');
+    const table = page.getByTestId('loan-table');
+    await expect(warning.or(table.getByText(name, { exact: true }).first())).toBeVisible();
+
+    if (await warning.isVisible()) {
+      if (onDuplicate === 'confirm') {
+        await page.getByTestId('confirm-duplicate').click();
+      } else {
+        await page.getByRole('button', { name: 'Cancel and go back' }).click();
+        // `exact` matters: without it this also matches "Cancel and go back".
+        await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+      }
+    }
+    await expect(table).toContainText(name);
   }
 
   test('records a loan, takes interest, then takes part of the principal back', async ({ page }) => {
@@ -613,6 +639,96 @@ test.describe('US-1.11 Scenario: The hand-loan register, end to end', () => {
     await expect(page.getByTestId('allocation-breakdown')).toContainText('hand loan');
   });
 
+  test('asks before recording a second loan to one borrower on one day', async ({ page }) => {
+    await unlock(page);
+    await goToSection(page, 'Loans');
+
+    const name = BORROWERS.duplicate;
+    await lend(page, name, '100000', '12', '2025-05-01');
+
+    // The same borrower, the same day, a different purpose — a real second loan.
+    await page.getByRole('button', { name: 'Record a loan' }).click();
+    const form = page.getByTestId('new-loan-form');
+    await form.getByLabel('Borrower name').fill(name);
+    await form.getByLabel('Loan amount').fill('250000');
+    await form.getByLabel('Interest rate %').fill('18');
+    await form.getByLabel('Loan date').fill('2025-05-01');
+    await form.getByRole('button', { name: 'Save loan' }).click();
+
+    // The prompt must show WHICH loan matched, not merely that one did.
+    const warning = page.getByTestId('duplicate-warning');
+    await expect(warning).toBeVisible();
+    await expect(page.getByTestId('duplicate-matches')).toContainText('1,00,000');
+    await expect(warning).toContainText('2025-05-01');
+
+    await page.getByTestId('confirm-duplicate').click();
+
+    // Both survive. Before this, the second silently overwrote the first.
+    const table = page.getByTestId('loan-table');
+    await expect(table).toContainText('1,00,000');
+    await expect(table).toContainText('2,50,000');
+  });
+
+  test('cancelling the duplicate prompt records nothing', async ({ page }) => {
+    await unlock(page);
+    await goToSection(page, 'Loans');
+
+    // Its own borrower: sharing one with the filter tests made the row count
+    // depend on what those tests had already recorded.
+    const name = BORROWERS.cancelled;
+    await lend(page, name, '800000', '12', '2025-06-01');
+
+    const rowsBefore = await page.getByTestId('loan-table').locator('tbody tr').count();
+
+    await page.getByRole('button', { name: 'Record a loan' }).click();
+    const form = page.getByTestId('new-loan-form');
+    await form.getByLabel('Borrower name').fill(name);
+    await form.getByLabel('Loan amount').fill('800000');
+    await form.getByLabel('Interest rate %').fill('12');
+    await form.getByLabel('Loan date').fill('2025-06-01');
+    await form.getByRole('button', { name: 'Save loan' }).click();
+
+    await expect(page.getByTestId('duplicate-warning')).toBeVisible();
+    await page.getByRole('button', { name: 'Cancel and go back' }).click();
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+
+    await expect(page.getByTestId('loan-table').locator('tbody tr')).toHaveCount(rowsBefore);
+  });
+
+  test('edits a loan and records what changed in its history', async ({ page }) => {
+    await unlock(page);
+    await goToSection(page, 'Loans');
+
+    const name = BORROWERS.edited;
+    await lend(page, name, '300000', '12', '2025-07-01');
+
+    await page.getByRole('button', { name, exact: true }).click();
+    const detail = page.locator('[data-testid^="loan-detail-"]');
+    await expect(detail).toBeVisible();
+
+    // The history exists from creation, so the original terms are recoverable.
+    await expect(detail.locator('[data-testid^="loan-audit-"]')).toContainText('Recorded');
+
+    await detail.locator('[data-testid^="edit-toggle-"]').click();
+    const editForm = detail.locator('[data-testid^="edit-loan-form-"]');
+    await editForm.getByLabel('Loan amount').fill('450000');
+    await editForm.getByLabel('Reason for this change').fill('amount was mistyped at entry');
+    await editForm.getByRole('button', { name: 'Save changes' }).click();
+
+    await expect(page.getByTestId('loan-table')).toContainText('4,50,000');
+
+    /*
+     * The panel is still open, and the trail must refresh in place. Clicking the
+     * borrower again would COLLAPSE it — and a trail that only updates when the
+     * panel is reopened reads, to the user, as an edit that was not recorded.
+     */
+    const trail = page.locator('[data-testid^="loan-audit-"]');
+    await expect(trail).toContainText('Principal');
+    await expect(trail).toContainText('300000');
+    await expect(trail).toContainText('450000');
+    await expect(trail).toContainText('amount was mistyped at entry');
+  });
+
   test('says when it was valued, rather than claiming to be live', async ({ page }) => {
     await unlock(page);
     await goToSection(page, 'Dashboard');
@@ -697,6 +813,117 @@ test.describe('US-4.6 Scenario: The hand-loan template carries the full register
     await expect(table).toContainText(name);
     await expect(table).toContainText('Partially repaid');
     await expect(table).toContainText('6,00,000');
+  });
+});
+
+test.describe('US-4.8 Scenario: A trade is typed in rather than imported', () => {
+  async function openTradeForm(page: Page) {
+    await unlock(page);
+    await goToSection(page, 'Ledger');
+    await page.getByRole('button', { name: 'Record a trade', exact: true }).click();
+    return page.getByTestId('trade-form');
+  }
+
+  async function fill(
+    form: ReturnType<Page['getByTestId']>,
+    values: {
+      kind: string;
+      side: 'Buy' | 'Sell';
+      identifier: string;
+      quantity: string;
+      price: string;
+      date?: string;
+    },
+  ): Promise<void> {
+    await form.getByLabel('What kind of holding').selectOption({ label: values.kind });
+    await form.getByLabel('Buy or sell').selectOption({ label: values.side });
+    await form.getByLabel('Trade date').fill(values.date ?? '2025-04-10');
+    await form.getByLabel('Quantity or units').fill(values.quantity);
+    await form.getByLabel('Price per unit').fill(values.price);
+  }
+
+  test('records an equity purchase that appears in Holdings', async ({ page }) => {
+    const form = await openTradeForm(page);
+    await fill(form, {
+      kind: 'Indian listed equity',
+      side: 'Buy',
+      identifier: 'E2ETRADE',
+      quantity: '100',
+      price: '1500',
+    });
+    await form.getByLabel('Symbol or ticker').fill('E2ETRADE');
+    await form.getByRole('button', { name: 'Record purchase' }).click();
+
+    const holdings = page.getByTestId('ledger-table');
+    await expect(holdings).toContainText('E2ETRADE');
+    await expect(holdings).toContainText('100');
+  });
+
+  test('asks for a folio rather than a ticker when the holding is a fund', async ({ page }) => {
+    const form = await openTradeForm(page);
+    await form.getByLabel('What kind of holding').selectOption({ label: 'Mutual fund (equity, debt or hybrid)' });
+
+    // The identifier field follows the asset class: a fund has no ticker, and
+    // asking for one invites a scheme name typed into a ticker field.
+    await expect(form.getByLabel('Folio number')).toBeVisible();
+    await expect(form.getByLabel('Symbol or ticker')).toHaveCount(0);
+  });
+
+  test('records a fund purchase against its folio', async ({ page }) => {
+    const form = await openTradeForm(page);
+    await fill(form, {
+      kind: 'Mutual fund (equity, debt or hybrid)',
+      side: 'Buy',
+      identifier: 'E2E-FOLIO-1',
+      quantity: '1543.21',
+      price: '64.8812',
+    });
+    await form.getByLabel('Folio number').fill('E2E-FOLIO-1');
+    await form.getByRole('button', { name: 'Record purchase' }).click();
+
+    await expect(page.getByTestId('ledger-table')).toContainText('E2E-FOLIO-1');
+  });
+
+  test('asks before recording the same trade twice, then keeps both fills', async ({ page }) => {
+    for (const attempt of [1, 2]) {
+      const form = await openTradeForm(page);
+      await fill(form, {
+        kind: 'Indian listed equity',
+        side: 'Buy',
+        identifier: 'E2EFILL',
+        quantity: '25',
+        price: '900',
+        date: '2025-05-20',
+      });
+      await form.getByLabel('Symbol or ticker').fill('E2EFILL');
+      await form.getByRole('button', { name: 'Record purchase' }).click();
+
+      if (attempt === 2) {
+        const warning = page.getByTestId('duplicate-trade-warning');
+        await expect(warning).toBeVisible();
+        await page.getByTestId('confirm-duplicate-trade').click();
+      }
+      await expect(page.getByTestId('ledger-table')).toContainText('E2EFILL');
+    }
+
+    // Two fills of 25 — the holding must read 50, not 25.
+    await expect(page.getByTestId('ledger-table')).toContainText('50');
+  });
+
+  test('explains a sale with nothing to sell instead of inventing a position', async ({ page }) => {
+    const form = await openTradeForm(page);
+    await fill(form, {
+      kind: 'Indian listed equity',
+      side: 'Sell',
+      identifier: 'E2ENOTHELD',
+      quantity: '10',
+      price: '100',
+      date: '2026-01-05',
+    });
+    await form.getByLabel('Symbol or ticker').fill('E2ENOTHELD');
+    await form.getByRole('button', { name: 'Record sale' }).click();
+
+    await expect(page.getByTestId('trade-unapplied')).toBeVisible();
   });
 });
 

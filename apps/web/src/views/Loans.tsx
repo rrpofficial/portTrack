@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useState, type SyntheticEvent } from 'react';
 import {
   api,
+  type LoanAuditEntry,
   type LoanQuery,
   type LoanRegister,
   type LoanSortKey,
@@ -171,7 +172,15 @@ export function Loans() {
           />
         </div>
 
-        {showNewLoan && <NewLoanForm onSaved={() => void load()} onClose={() => { setShowNewLoan(false); }} />}
+        {showNewLoan && (
+          <NewLoanForm
+            onSaved={() => void load()}
+            onClose={() => {
+              setShowNewLoan(false);
+            }}
+            known={register?.loans ?? []}
+          />
+        )}
       </Card>
 
       <Card title="Filter and sort">
@@ -407,8 +416,45 @@ function LoanRow({
 }
 
 function LoanDetail({ loan, onChanged }: { loan: LoanView; onChanged: () => void }) {
+  const [editing, setEditing] = useState(false);
+  /*
+   * Bumped by anything that writes a trail entry. The history is fetched once
+   * per loan, so without this an edit made with the panel open left the trail
+   * showing the state before it — the user would reasonably conclude the change
+   * had not been recorded.
+   */
+  const [revision, setRevision] = useState(0);
+
+  const changed = useCallback((): void => {
+    setRevision((current) => current + 1);
+    onChanged();
+  }, [onChanged]);
+
   return (
     <div className="pt-stack" data-testid={`loan-detail-${loan.loanId}`}>
+      <div className="pt-actions">
+        <button
+          type="button"
+          className="pt-button-inline"
+          data-testid={`edit-toggle-${loan.loanId}`}
+          onClick={() => {
+            setEditing((open) => !open);
+          }}
+        >
+          {editing ? 'Cancel edit' : 'Edit loan'}
+        </button>
+      </div>
+
+      {editing && (
+        <EditLoanForm
+          loan={loan}
+          onSaved={() => {
+            setEditing(false);
+            changed();
+          }}
+        />
+      )}
+
       <dl className="pt-stats">
         <div>
           <dt>Interest accrued</dt>
@@ -453,7 +499,7 @@ function LoanDetail({ loan, onChanged }: { loan: LoanView; onChanged: () => void
           testId={`interest-form-${loan.loanId}`}
           submitLabel="Record interest"
           onSubmit={(input) => api.recordInterestPayment(loan.loanId, input)}
-          onDone={onChanged}
+          onDone={changed}
         />
         <PaymentForm
           title="Record a principal repayment"
@@ -461,10 +507,233 @@ function LoanDetail({ loan, onChanged }: { loan: LoanView; onChanged: () => void
           submitLabel="Record repayment"
           hint="Interest accrues only on what remains, from this date."
           onSubmit={(input) => api.recordPrincipalRepayment(loan.loanId, input)}
-          onDone={onChanged}
+          onDone={changed}
         />
       </div>
+
+      <AuditTrail loanId={loan.loanId} revision={revision} />
     </div>
+  );
+}
+
+const ACTION_LABEL: Readonly<Record<LoanAuditEntry['action'], string>> = {
+  CREATED: 'Recorded',
+  CREATED_AS_DUPLICATE: 'Recorded as a confirmed duplicate',
+  EDITED: 'Edited',
+  CLOSED: 'Closed',
+  REOPENED: 'Reopened',
+  PRINCIPAL_REPAYMENT: 'Principal repayment',
+  INTEREST_PAYMENT: 'Interest payment',
+};
+
+/**
+ * The trail, read from the vault rather than reconstructed in the browser.
+ *
+ * Reloaded whenever the detail panel is opened: an edit made in this session
+ * must appear without a page refresh, or the user cannot tell whether it was
+ * recorded.
+ */
+function AuditTrail({ loanId, revision }: { loanId: string; revision: number }) {
+  const [entries, setEntries] = useState<readonly LoanAuditEntry[] | undefined>();
+
+  useEffect(() => {
+    void (async () => {
+      const result = await api.loanAudit(loanId);
+      setEntries(result.ok ? result.value.entries : []);
+    })();
+  }, [loanId, revision]);
+
+  return (
+    <div>
+      <h4 className="pt-subhead">History</h4>
+      <div className="pt-table-scroll">
+        <table className="pt-table" data-testid={`loan-audit-${loanId}`}>
+          <thead>
+            <tr>
+              <th scope="col">When</th>
+              <th scope="col">What</th>
+              <th scope="col">Field</th>
+              <th scope="col">From</th>
+              <th scope="col">To</th>
+              <th scope="col">Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries === undefined && (
+              <tr>
+                <td colSpan={6} className="pt-muted">
+                  Loading history…
+                </td>
+              </tr>
+            )}
+            {entries?.length === 0 && (
+              <tr>
+                <td colSpan={6} className="pt-muted">
+                  Nothing recorded against this loan yet.
+                </td>
+              </tr>
+            )}
+            {entries?.map((entry) => (
+              <tr key={entry.entryId}>
+                <td className="pt-hash">{entry.recordedAt.replace('T', ' ').slice(0, 19)}</td>
+                <td>{ACTION_LABEL[entry.action]}</td>
+                <td>{entry.field ?? '—'}</td>
+                <td>{entry.oldValue ?? '—'}</td>
+                <td>{entry.newValue ?? '—'}</td>
+                <td>{entry.reason ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Every field is editable, by design. A mistyped principal is the main reason
+ * anyone wants an edit at all, and the alternative — closing the loan and
+ * re-entering it — leaves a settled loan on the register that was never settled.
+ *
+ * Only fields the user actually changed are sent, so the trail records the edit
+ * rather than a restatement of every field.
+ */
+function EditLoanForm({ loan, onSaved }: { loan: LoanView; onSaved: () => void }) {
+  const [borrowerName, setBorrowerName] = useState(loan.borrowerName);
+  const [principal, setPrincipal] = useState(loan.principal.amount);
+  const [rate, setRate] = useState(loan.interestRatePct);
+  const [loanDate, setLoanDate] = useState(loan.loanDate);
+  const [notes, setNotes] = useState(loan.notes);
+  const [closedDate, setClosedDate] = useState(loan.closedDate ?? '');
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState<string | undefined>();
+  const [busy, setBusy] = useState(false);
+
+  const submit = useCallback(async (): Promise<void> => {
+    setBusy(true);
+    setError(undefined);
+
+    const result = await api.editLoan(loan.loanId, {
+      ...(borrowerName === loan.borrowerName ? {} : { borrowerName }),
+      ...(principal === loan.principal.amount ? {} : { principalAmount: principal.trim() }),
+      ...(rate === loan.interestRatePct ? {} : { interestRatePct: rate.trim() }),
+      ...(loanDate === loan.loanDate ? {} : { loanDate }),
+      ...(notes === loan.notes ? {} : { notes }),
+      // '' clears the date and reopens the loan; null is how the API says so.
+      ...(closedDate === (loan.closedDate ?? '')
+        ? {}
+        : { closedDate: closedDate === '' ? null : closedDate }),
+      ...(reason.trim().length === 0 ? {} : { reason: reason.trim() }),
+    });
+
+    setBusy(false);
+    if (!result.ok) {
+      setError(result.error.message);
+      return;
+    }
+    onSaved();
+  }, [loan, borrowerName, principal, rate, loanDate, notes, closedDate, reason, onSaved]);
+
+  function onFormSubmit(event: SyntheticEvent): void {
+    event.preventDefault();
+    void submit();
+  }
+
+  return (
+    <form
+      className="pt-form pt-form--grid"
+      onSubmit={onFormSubmit}
+      data-testid={`edit-loan-form-${loan.loanId}`}
+    >
+      <div>
+        <label htmlFor={`edit-borrower-${loan.loanId}`}>Borrower name</label>
+        <input
+          id={`edit-borrower-${loan.loanId}`}
+          type="text"
+          value={borrowerName}
+          onChange={(event) => {
+            setBorrowerName(event.target.value);
+          }}
+        />
+      </div>
+      <div>
+        <label htmlFor={`edit-amount-${loan.loanId}`}>Loan amount</label>
+        <input
+          id={`edit-amount-${loan.loanId}`}
+          type="text"
+          inputMode="decimal"
+          value={principal}
+          onChange={(event) => {
+            setPrincipal(event.target.value);
+          }}
+        />
+      </div>
+      <div>
+        <label htmlFor={`edit-rate-${loan.loanId}`}>Interest rate %</label>
+        <input
+          id={`edit-rate-${loan.loanId}`}
+          type="text"
+          inputMode="decimal"
+          value={rate}
+          onChange={(event) => {
+            setRate(event.target.value);
+          }}
+        />
+      </div>
+      <div>
+        <label htmlFor={`edit-date-${loan.loanId}`}>Loan date</label>
+        <input
+          id={`edit-date-${loan.loanId}`}
+          type="date"
+          value={loanDate}
+          onChange={(event) => {
+            setLoanDate(event.target.value);
+          }}
+        />
+      </div>
+      <div>
+        <label htmlFor={`edit-closed-${loan.loanId}`}>Closed date</label>
+        <input
+          id={`edit-closed-${loan.loanId}`}
+          type="date"
+          value={closedDate}
+          onChange={(event) => {
+            setClosedDate(event.target.value);
+          }}
+        />
+      </div>
+      <div>
+        <label htmlFor={`edit-notes-${loan.loanId}`}>Notes</label>
+        <input
+          id={`edit-notes-${loan.loanId}`}
+          type="text"
+          value={notes}
+          onChange={(event) => {
+            setNotes(event.target.value);
+          }}
+        />
+      </div>
+      <div className="pt-form__wide">
+        <label htmlFor={`edit-reason-${loan.loanId}`}>Reason for this change</label>
+        <input
+          id={`edit-reason-${loan.loanId}`}
+          type="text"
+          value={reason}
+          placeholder="e.g. amount was mistyped at entry"
+          onChange={(event) => {
+            setReason(event.target.value);
+          }}
+        />
+      </div>
+      <button type="submit" disabled={busy}>
+        {busy ? 'Saving…' : 'Save changes'}
+      </button>
+      {error !== undefined && (
+        <p className="pt-error" role="alert">
+          {error}
+        </p>
+      )}
+    </form>
   );
 }
 
@@ -633,7 +902,16 @@ function PaymentForm({
   );
 }
 
-function NewLoanForm({ onSaved, onClose }: { onSaved: () => void; onClose: () => void }) {
+function NewLoanForm({
+  onSaved,
+  onClose,
+  known,
+}: {
+  onSaved: () => void;
+  onClose: () => void;
+  /** The loans already on screen, so a flagged duplicate can be shown in full. */
+  known: readonly LoanView[];
+}) {
   const [borrowerName, setBorrowerName] = useState('');
   const [principal, setPrincipal] = useState('');
   const [rate, setRate] = useState('12');
@@ -641,32 +919,127 @@ function NewLoanForm({ onSaved, onClose }: { onSaved: () => void; onClose: () =>
   const [notes, setNotes] = useState('');
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
+  const [duplicates, setDuplicates] = useState<readonly string[] | undefined>();
 
-  const submit = useCallback(async (): Promise<void> => {
-    setBusy(true);
-    setError(undefined);
-    const result = await api.recordLoan({
-      borrowerName,
-      principal: { amount: principal.trim(), currency: 'INR' },
-      interestRatePct: rate.trim(),
-      loanDate,
-      ...(notes.trim().length === 0 ? {} : { notes: notes.trim() }),
-    });
-    setBusy(false);
-    if (!result.ok) {
-      setError(result.error.message);
-      return;
-    }
-    setBorrowerName('');
-    setPrincipal('');
-    setNotes('');
-    onSaved();
-    onClose();
-  }, [borrowerName, principal, rate, loanDate, notes, onSaved, onClose]);
+  const submit = useCallback(
+    async (confirmDuplicate: boolean): Promise<void> => {
+      setBusy(true);
+      setError(undefined);
+      const result = await api.recordLoan({
+        borrowerName,
+        principal: { amount: principal.trim(), currency: 'INR' },
+        interestRatePct: rate.trim(),
+        loanDate,
+        ...(notes.trim().length === 0 ? {} : { notes: notes.trim() }),
+        ...(confirmDuplicate ? { confirmDuplicate: true } : {}),
+      });
+      setBusy(false);
+
+      if (!result.ok) {
+        // Not a failure the user should have to decode — it is a question, and
+        // the answer is a button. The typed payload is what makes it possible
+        // to show WHICH loans matched rather than just saying one did.
+        if (result.error.code === 'DUPLICATE_LOAN') {
+          setDuplicates(result.error.duplicates ?? []);
+          return;
+        }
+        setError(result.error.message);
+        return;
+      }
+
+      setDuplicates(undefined);
+      setBorrowerName('');
+      setPrincipal('');
+      setNotes('');
+      onSaved();
+      onClose();
+    },
+    [borrowerName, principal, rate, loanDate, notes, onSaved, onClose],
+  );
 
   function onFormSubmit(event: SyntheticEvent): void {
     event.preventDefault();
-    void submit();
+    void submit(false);
+  }
+
+  const matched = known.filter((loan) => duplicates?.includes(loan.loanId) === true);
+
+  if (duplicates !== undefined) {
+    return (
+      <div className="pt-callout pt-callout--warn" role="alertdialog" data-testid="duplicate-warning">
+        <h3 className="pt-subhead">This borrower already has a loan dated {loanDate}</h3>
+        <p className="pt-muted">
+          {matched.length === 1
+            ? 'One loan already on the register matches. '
+            : `${String(duplicates.length)} loans already on the register match. `}
+          If this is a further, separate loan, record it — the register keeps both. If you are
+          re-entering a loan you already recorded, cancel and edit the existing one instead.
+        </p>
+
+        <div className="pt-table-scroll">
+          <table className="pt-table" data-testid="duplicate-matches">
+            <thead>
+              <tr>
+                <th scope="col">Borrower</th>
+                <th scope="col">Loan date</th>
+                <th scope="col" className="pt-align-end">Amount</th>
+                <th scope="col" className="pt-align-end">Outstanding</th>
+                <th scope="col">Status</th>
+                <th scope="col">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {matched.map((loan) => (
+                <tr key={loan.loanId}>
+                  <td>{loan.borrowerName}</td>
+                  <td>{loan.loanDate}</td>
+                  <td className="pt-numeric">
+                    <Amount value={loan.principal} />
+                  </td>
+                  <td className="pt-numeric">
+                    <Amount value={loan.outstandingPrincipal} />
+                  </td>
+                  <td>{STATUS_LABEL[loan.status]}</td>
+                  <td>{loan.notes}</td>
+                </tr>
+              ))}
+              {matched.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="pt-muted">
+                    The matching loans are outside the current filter.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="pt-actions">
+          <button
+            type="button"
+            disabled={busy}
+            data-testid="confirm-duplicate"
+            onClick={() => void submit(true)}
+          >
+            {busy ? 'Recording…' : 'Yes, record it as a separate loan'}
+          </button>
+          <button
+            type="button"
+            className="pt-button-inline"
+            onClick={() => {
+              setDuplicates(undefined);
+            }}
+          >
+            Cancel and go back
+          </button>
+        </div>
+        {error !== undefined && (
+          <p className="pt-error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+    );
   }
 
   return (
